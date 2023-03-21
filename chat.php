@@ -1,6 +1,12 @@
 <?php
 $openai_key = getenv( 'OPENAI_API_KEY', true );
+if ( empty( $openai_key ) ) {
+	echo 'Please set your OpenAI API key in the OPENAI_API_KEY environment variable:', PHP_EOL;
+	echo 'export OPENAI_API_KEY=sk-...', PHP_EOL;
+	exit( 1 );
+}
 
+// Get the current usage.
 $ch = curl_init();
 curl_setopt( $ch, CURLOPT_URL, 'https://api.openai.com/dashboard/billing/usage?end_date=' . date( 'Y-m-d' ) . '&start_date=2023-01-01' );
 curl_setopt( $ch, CURLOPT_RETURNTRANSFER, 1 );
@@ -15,7 +21,7 @@ curl_setopt(
 $output = json_decode( curl_exec( $ch ), true );
 if ( isset( $output['error'] ) ) {
 	echo $output['error']['message'], PHP_EOL;
-	exit;
+	exit( 1 );
 }
 echo 'OpenAI usage: $', $output['total_usage'] / 100, PHP_EOL;
 
@@ -24,6 +30,7 @@ $full_history_file = __DIR__ . '/chat-history.txt';
 $fp = fopen( $full_history_file, 'a' );
 readline_read_history( $readline_history_file );
 
+// Start chatting.
 $messages = array();
 while ( true ) {
 	$input = readline( '> ' );
@@ -73,7 +80,7 @@ while ( true ) {
 	$output = json_decode( curl_exec( $ch ), true );
 	if ( isset( $output['error'] ) ) {
 		echo $output['error']['message'], PHP_EOL;
-		exit;
+		exit( 1 );
 	}
 	$message = $output['choices'][0]['message'];
 	$messages[] = $message;
