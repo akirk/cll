@@ -7,25 +7,6 @@ if ( empty( $openai_key ) ) {
 	exit( 1 );
 }
 
-// Get the current usage.
-$ch = curl_init();
-curl_setopt( $ch, CURLOPT_URL, 'https://api.openai.com/dashboard/billing/usage?end_date=' . date( 'Y-m-d' ) . '&start_date=' . date( 'Y-m-d', time() - 8640000 ) );
-curl_setopt( $ch, CURLOPT_RETURNTRANSFER, 1 );
-curl_setopt(
-	$ch,
-	CURLOPT_HTTPHEADER,
-	array(
-		'Content-Type: application/json',
-		'Authorization: Bearer ' . $openai_key,
-	)
-);
-$output = json_decode( curl_exec( $ch ), true );
-if ( isset( $output['error'] ) ) {
-	echo $output['error']['message'], PHP_EOL;
-	exit( 1 );
-}
-echo 'OpenAI usage: $', $output['total_usage'] / 100, PHP_EOL;
-
 $readline_history_file = __DIR__ . '/.history';
 $full_history_file = __DIR__ . '/chat-history.txt';
 $fp = fopen( $full_history_file, 'a' );
@@ -79,7 +60,7 @@ while ( true ) {
 			)
 		)
 	);
-	echo PHP_EOL, 'AI:', PHP_EOL;
+	echo PHP_EOL;
 	$message = '';
 
 	curl_setopt(
