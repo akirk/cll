@@ -89,7 +89,10 @@ while ( true ) {
 	$output = curl_exec( $ch );
 
 	echo PHP_EOL;
-	$messages[] = $message;
+	$messages[] = array(
+		'role'    => 'assistant',
+		'content' => $message,
+	);
 	if ( ltrim( $input ) === $input ) {
 		// Persist history unless prepended by whitespace.
 		fwrite( $fp, $message . PHP_EOL );
