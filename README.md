@@ -1,6 +1,8 @@
 # cli-chatgpt
 
-To use this, make your [OpenAI Key](https://platform.openai.com/account/api-keys) available as an environment variable:
+A simple command line chatbot using [OpenAI's GPT-3](https://openai.com/blog/openai-api/) that uses streaming for faster responses.
+
+Before you can use this you need to make your [OpenAI Key](https://platform.openai.com/account/api-keys) available as an environment variable:
 
 ```bash
 export OPENAI_API_KEY=sk-...
