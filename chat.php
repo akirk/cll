@@ -76,7 +76,7 @@ while ( true ) {
 			$items = explode( 'data: ', $data );
 			foreach ( $items as $item ) {
 				$json = json_decode( trim( $item ), true );
-				if ( ! empty( $json['choices'][0]['delta']['content'] ) ) {
+				if ( isset( $json['choices'][0]['delta']['content'] ) ) {
 					echo $json['choices'][0]['delta']['content'];
 					$message .= $json['choices'][0]['delta']['content'];
 				}
