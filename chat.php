@@ -14,9 +14,22 @@ readline_read_history( $readline_history_file );
 
 // Start chatting.
 $messages = array();
+$multiline = false;
 while ( true ) {
 	$input = readline( '> ' );
+	if ( false !== $multiline ) {
+		if ( '.' !== trim( $input ) ) {
+			$multiline .= $input . PHP_EOL;
+			continue;
+		} else {
+			$input = $multiline;
+			// Finished with Multiline input.
+			$multiline = false;
+		}
+	}
 	if ( empty( $input ) ) {
+		$multiline = '';
+		echo 'Starting multiline input. End with the last message as just a dot.', PHP_EOL;
 		continue;
 	}
 	if ( in_array( strtolower( trim( $input ) ), array( 'quit', 'exit', 'bye' ) ) ) {
