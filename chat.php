@@ -12,11 +12,17 @@ $full_history_file = __DIR__ . '/chat-history.txt';
 $fp = fopen( $full_history_file, 'a' );
 readline_read_history( $readline_history_file );
 
+$initial_input = trim( implode( ' ', array_slice( $_SERVER['argv'], 1 ) ) );
 // Start chatting.
 $messages = array();
 $multiline = false;
 while ( true ) {
-	$input = readline( '> ' );
+	if ( ! empty( $initial_input ) ) {
+		$input = $initial_input;
+		$initial_input = null;
+	} else {
+		$input = readline( '> ' );
+	}
 	if ( false !== $multiline ) {
 		if ( '.' !== trim( $input ) ) {
 			$multiline .= $input . PHP_EOL;
@@ -27,14 +33,17 @@ while ( true ) {
 			$multiline = false;
 		}
 	}
-	if ( empty( $input ) ) {
+
+	if ( false === $input || in_array( strtolower( trim( $input ) ), array( 'quit', 'exit', 'bye' ) ) ) {
+		break;
+	}
+
+	if ( empty( $input ) || '.' === $input ) {
 		$multiline = '';
 		echo 'Starting multiline input. End with the last message as just a dot.', PHP_EOL;
 		continue;
 	}
-	if ( in_array( strtolower( trim( $input ) ), array( 'quit', 'exit', 'bye' ) ) ) {
-		break;
-	}
+
 	readline_add_history( $input );
 	if ( ltrim( $input ) === $input ) {
 		// Persist history unless prepended by whitespace.
