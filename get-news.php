@@ -10,9 +10,9 @@ if ( empty( $openai_key ) ) {
 
 $messages[] = array(
 	'role'    => 'user',
-	'content' => 'Get some news from a random US news website on the internet.',
+	'content' => 'Get some news from a random US news site (don\'t try to access APIs and USnews.com is broken).',
 );
-
+echo 'Prompt: ', $messages[0]['content'], PHP_EOL;
 function chatgpt( $messages ) {
 	global $openai_key;
 
@@ -71,16 +71,30 @@ $messages[] = $message;
 if ( isset( $message['function_call']['name'] ) ) {
 	if ( $message['function_call']['name'] === 'get_extracted_url_contents' ) {
 		$args = json_decode( $message['function_call']['arguments'] );
+		$opts = array('http' =>
+		  array(
+		    'timeout' => 8
+		  )
+		);
+		$context  = stream_context_create($opts);
 		echo 'Fetching ', $args->url, ' by request of ChatGPT.';
-		set_error_handler( function() {} );
-		$config = new \andreskrey\Readability\Configuration();
-		$config->setFixRelativeURLs( true );
-		$config->setOriginalURL( $args->url );
-		$readability = new \andreskrey\Readability\Readability( $config );
-
-		$readability->parse( file_get_contents( $args->url ) );
-		$content = str_replace( '&#xD;', '', $readability->getContent() );
-
+		$content = file_get_contents( $args->url, false, $context );
+		$content = preg_replace( '#<header.*?</header>#is', '', $content ) ?: $content;
+		$content = preg_replace( '#<head.*?</head>#is', '', $content ) ?: $content;
+		$content = preg_replace( '#<footer.*?</footer>#is', '', $content ) ?: $content;
+		$content = preg_replace( '#<style.*?</style>#is', '', $content ) ?: $content;
+		$content = preg_replace( '#<script.*?</script>#is', '', $content ) ?: $content;
+		$content = preg_replace( '#<noscript.*?</noscript>#is', '', $content ) ?: $content;
+		$content = preg_replace( '#<svg.*?</svg>#is', '', $content ) ?: $content;
+		$content = preg_replace( '#<iframe.*?</iframe>#is', '', $content ) ?: $content;
+		$content = preg_replace( '#<img.*?</img>#is', '', $content ) ?: $content;
+		$content = preg_replace( '#<figure.*?</figure>#is', '', $content ) ?: $content;
+		$content = preg_replace( '#class="[^"]+"#i', '', $content ) ?: $content;
+		$content = preg_replace( '#<!--.*?-->#is', '', $content ) ?: $content;
+		$content = str_replace( '&nbsp;', ' ', $content );
+		$content = strip_tags( $content, '<strong><h1><h2><h3><h4>' );
+		$content = substr( preg_replace( '#[\t ]+#', ' ', $content ), 0, 4000 );
+		$content = substr( preg_replace( '#(\s*\n)+#', PHP_EOL, $content ), 0, 4000 );
 
 		$messages[] = array(
 			'role'    => 'user',
