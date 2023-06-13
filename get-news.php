@@ -10,7 +10,7 @@ if ( empty( $openai_key ) ) {
 
 $messages[] = array(
 	'role'    => 'user',
-	'content' => 'Get some news from a random US news site (don\'t try to access APIs and USnews.com is broken).',
+	'content' => 'Get some news from a random German news website on the internet. Please only respond in English.',
 );
 echo 'Prompt: ', $messages[0]['content'], PHP_EOL;
 function chatgpt( $messages ) {

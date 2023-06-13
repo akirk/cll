@@ -10,7 +10,7 @@ if ( empty( $openai_key ) ) {
 
 $messages[] = array(
 	'role'    => 'user',
-	'content' => 'Research on the internet who won the ATP French Open 2023 but don\'t use a search engine.',
+	'content' => 'Research on wikipedia who won the (both men\'s and women\'s) ATP French Open 2023 but don\'t use a search engine. If you cannot find a result, ask for a subsequent a function call.',
 );
 echo 'Prompt: ', $messages[0]['content'], PHP_EOL;
 function chatgpt( $messages ) {
@@ -68,7 +68,7 @@ $output = chatgpt( $messages );
 
 $message = $output['choices'][0]['message'];
 $messages[] = $message;
-if ( isset( $message['function_call']['name'] ) ) {
+while ( isset( $message['function_call']['name'] ) ) {
 	if ( $message['function_call']['name'] === 'get_extracted_url_contents' ) {
 		$args = json_decode( $message['function_call']['arguments'] );
 		$opts = array('http' =>
@@ -104,6 +104,9 @@ if ( isset( $message['function_call']['name'] ) ) {
 		$output = chatgpt( $messages );
 		$message = $output['choices'][0]['message'];
 		$messages[] = $message;
+	} else {
+		echo 'Unknown function call.';
+		exit( 1 );
 	}
 }
 $out = 'AI (' . $output['usage']['total_tokens'] . ' tokens used):' . PHP_EOL . trim( $message['content'] ) . PHP_EOL;
