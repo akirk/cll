@@ -1,0 +1,36 @@
+{
+    "name": "ozh/log",
+    "type": "library",
+    "description": "Simple PSR-3 logger to log messages into an array",
+    "keywords": [
+        "ozh",
+        "log",
+        "psr-3",
+        "psr3"
+    ],
+    "homepage": "https://github.com/ozh/log",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "ozh",
+            "homepage": "https://ozh.org/"
+        }
+    ],
+    "require": {
+        "php" : ">=5.3",
+        "psr/log": "^1.0"
+    },
+    "require-dev": {
+        "phpunit/phpunit" : ">=4.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Ozh\\Log\\": "src"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Ozh\\Log\\": "tests"
+        }
+    }
+}
