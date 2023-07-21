@@ -12,9 +12,32 @@ $full_history_file = __DIR__ . '/chat-history.txt';
 $fp = fopen( $full_history_file, 'a' );
 readline_read_history( $readline_history_file );
 
-$initial_input = trim( implode( ' ', array_slice( $_SERVER['argv'], 1 ) ) );
-// Start chatting.
 $messages = array();
+
+$initial_input = trim( implode( ' ', array_slice( $_SERVER['argv'], 1 ) ) );
+if ( substr( $initial_input, 0, 3 ) === '-s ' ) {
+	$messages[] = array(
+		'role'    => 'system',
+		'content' => $initial_input,
+	);
+	echo 'System: ', substr( $initial_input, 3 ), PHP_EOL;
+	$initial_input = '';
+}
+$ch = curl_init();
+curl_setopt( $ch, CURLOPT_URL, 'https://api.openai.com/v1/chat/completions' );
+curl_setopt( $ch, CURLOPT_RETURNTRANSFER, 1 );
+curl_setopt( $ch, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1 );
+curl_setopt(
+	$ch,
+	CURLOPT_HTTPHEADER,
+	array(
+		'Content-Type: application/json',
+		'Authorization: Bearer ' . $openai_key,
+		'Transfer-Encoding: chunked',
+	)
+);
+
+// Start chatting.
 $multiline = false;
 while ( true ) {
 	if ( ! empty( $initial_input ) ) {
@@ -56,19 +79,6 @@ while ( true ) {
 	$messages[] = array(
 		'role'    => 'user',
 		'content' => $input,
-	);
-
-	$ch = curl_init();
-	curl_setopt( $ch, CURLOPT_URL, 'https://api.openai.com/v1/chat/completions' );
-	curl_setopt( $ch, CURLOPT_RETURNTRANSFER, 1 );
-	curl_setopt(
-		$ch,
-		CURLOPT_HTTPHEADER,
-		array(
-			'Content-Type: application/json',
-			'Authorization: Bearer ' . $openai_key,
-			'Transfer-Encoding: chunked',
-		)
 	);
 
 	curl_setopt(
