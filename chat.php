@@ -62,17 +62,6 @@ if ( isset( $options['l'] ) ) {
 	$options['r'] = 1;
 }
 
-if ( isset( $options['s'] ) && $options['s'] ) {
-	$messages[] = array(
-		'role'    => 'system',
-		'content' => $options['s'],
-	);
-	echo 'System: ', $options['s'], PHP_EOL;
-	$initial_input = '';
-} elseif ( trim( $initial_input ) ) {
-	echo '> ', $initial_input, PHP_EOL;
-}
-
 $sel = false;
 $last_conversations = array();
 
@@ -118,24 +107,36 @@ if ( isset( $options['r'] ) ) {
 			$length = 10;
 			foreach ( $last_history_files as $k => $last_history_file ) {
 				$conversation_contents = file_get_contents( $last_history_file );
-				$split = preg_split( '/^> (.*)\n\n/m', trim( $conversation_contents ), -1, PREG_SPLIT_DELIM_CAPTURE );
+				$split = preg_split( '/^>(?: ([^\n]*)|>> (.*)\n\.)\n\n/ms', trim( $conversation_contents ), -1, PREG_SPLIT_DELIM_CAPTURE );
+				$split = array_filter( $split );
+				$split = array_values( $split );
+
 				if ( count( $split ) < 2 ) {
 					echo 'Empty history file: ', $last_history_file, PHP_EOL;
 					unset( $history_files[ $last_history_file ] );
 					unset( $last_history_files[ $k ] );
 					continue;
 				}
-				array_shift( $split );
+				$s = array_shift( $split );
+				if ( substr( $s, 0, 7 ) === 'System:' ) {
+					$split[0] = $s . $split[0];
+				} else {
+					array_unshift( $split, $s );
+				}
+
 				$history_files[ $last_history_file ] = $split;
 				$answers = floor( count( $history_files[ $last_history_file ] ) / 2 );
 
 				$c = $c + 1;
 
 				if ( ! isset( $options['l'] ) ) {
-					echo PHP_EOL, $c, ') ', ltrim( $history_files[ $last_history_file ][0], '> ' );
+					echo PHP_EOL, $c, ') ', ltrim( substr( $history_files[ $last_history_file ][0], 0, 100 ), '> ' );
 				}
 				echo ' (', $answers, ' answer', $answers % 2 ? '' : 's', ', ', str_word_count( $conversation_contents ), ' words)', PHP_EOL;
 				$last_conversations[ $c ] = $last_history_file;
+				if ( isset( $options['l'] ) ) {
+					break;
+				}
 			}
 
 			krsort( $history_files );
@@ -167,6 +168,19 @@ if ( isset( $options['r'] ) ) {
 		if ( ! isset( $last_conversations[ $sel ] ) ) {
 			echo 'Invalid selection.', PHP_EOL;
 		}
+		if ( substr( $history_files[ $last_conversations[ $sel ] ][ 0 ], 0, 7 ) === 'System:' ) {
+			$system = substr( $history_files[ $last_conversations[ $sel ] ][ 0 ], 8, strpos( $history_files[ $last_conversations[ $sel ] ][ 0 ], PHP_EOL ) - 8 );
+			$history_files[ $last_conversations[ $sel ] ][ 0 ]	= substr( $history_files[ $last_conversations[ $sel ] ][ 0 ], strlen( $system ) + 9 );
+			if ( isset( $options['s'] ) && $options['s'] ) {
+				echo 'Old System prompt: ' . $system, PHP_EOL, 'New ';
+				$system = $options['s'];
+			}
+			echo 'System prompt: ', $system, PHP_EOL;
+			array_unshift( $messages, array(
+				'role'    => 'system',
+				'content' => $system,
+			) );
+		}
 		foreach ( $history_files[ $last_conversations[ $sel ] ] as $k => $message ) {
 			$messages[] = array(
 				'role'    => $k % 2 ? 'assistant' : 'user',
@@ -179,6 +193,16 @@ if ( isset( $options['r'] ) ) {
 			echo $message, PHP_EOL;
 		}
 	}
+} elseif ( isset( $options['s'] ) && $options['s'] ) {
+	$system = $options['s'];
+	array_unshift( $messages, array(
+		'role'    => 'system',
+		'content' => $system,
+	) );
+	echo 'System prompt: ', $system, PHP_EOL;
+	$initial_input = '';
+} elseif ( trim( $initial_input ) ) {
+	echo '> ', $initial_input, PHP_EOL;
 }
 
 readline_clear_history();
@@ -236,6 +260,11 @@ while ( true ) {
 
 		if ( $sel && $last_conversations && isset( $last_conversations[ $sel ] ) ) {
 			copy( $last_conversations[ $sel ], $full_history_file );
+
+			if ( $system ) {
+				file_put_contents( $full_history_file, 'System: ' . $system  . PHP_EOL . trim( preg_replace( '/^System: .*$/m', '', file_get_contents( $full_history_file ) ) ) );
+				$system = false;
+			}
 		}
 
 		$fp = fopen( $full_history_file, 'a' );
@@ -243,7 +272,15 @@ while ( true ) {
 	if ( ltrim( $input ) === $input ) {
 		// Persist history unless prepended by whitespace.
 		readline_write_history( $readline_history_file );
-		fwrite( $fp, '> ' . $input . PHP_EOL . PHP_EOL );
+		if ( $system ) {
+			fwrite( $fp, 'System: ' . $system . PHP_EOL );
+			$system = false;
+		}
+		if ( false === strpos( $input, PHP_EOL ) ) {
+			fwrite( $fp, '> ' . $input . PHP_EOL . PHP_EOL );
+		} else {
+			fwrite( $fp, '>>> ' . $input . PHP_EOL . '.' . PHP_EOL );
+		}
 	}
 	$messages[] = array(
 		'role'    => 'user',
