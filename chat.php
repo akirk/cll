@@ -20,6 +20,7 @@ $history_directory = $history_base_directory . date( 'Y/m', $time );
 $full_history_file = $history_directory . '/history.' . $time . '.txt';
 
 $options = getopt( 's:lhr::', array(), $initial_input );
+$system = false;
 
 if ( isset( $options['h'] ) ) {
 	$self = basename( $_SERVER['argv'][0] );
