@@ -8,21 +8,178 @@ if ( empty( $openai_key ) ) {
 }
 
 $readline_history_file = __DIR__ . '/.history';
-$full_history_file = __DIR__ . '/chat-history.txt';
-$fp = fopen( $full_history_file, 'a' );
-readline_read_history( $readline_history_file );
+$history_base_directory = __DIR__ . '/chats/';
+if ( ! file_exists( $history_base_directory ) ) {
+	if ( mkdir( $history_base_directory) ) {
+		echo 'Could not create history directory: ', $history_base_directory, PHP_EOL;
+		exit( 1 );
+	}
+}
+$time = time();
+$history_directory = $history_base_directory . date( 'Y/m', $time );
+$full_history_file = $history_directory . '/history.' . $time . '.txt';
 
+$options = getopt( 's:lhr::', array(), $initial_input );
+
+if ( isset( $options['h'] ) ) {
+	$self = basename( $_SERVER['argv'][0] );
+	echo <<<USAGE
+Usage: $self [-l] [-r [number]] [conversation_input]
+
+Options:
+  -l                Resume last conversation.
+  -r [number]       Resume a previous conversation and list 'number' conversations (default: 10).
+
+Arguments:
+  conversation_input  Input for the first conversation.
+
+Notes:
+  - To input multiline messages, send an empty message.
+  - To end the conversation, enter "bye".
+
+Example usage:
+  $self -l
+    Resumes the last conversation.
+
+  $self -r 5
+    Resume a conversation and list the last 5 to choose from.
+
+  $self Tell me a joke
+    Starts a new conversation with the given message.
+
+USAGE;
+	exit( 1 );
+}
 $messages = array();
+$initial_input = trim( implode( ' ', array_slice( $_SERVER['argv'], $initial_input ) ) . ' ' );
+$fp = false;
 
-$initial_input = trim( implode( ' ', array_slice( $_SERVER['argv'], 1 ) ) );
-if ( substr( $initial_input, 0, 3 ) === '-s ' ) {
+if ( isset( $options['l'] ) ) {
+	$options['r'] = 1;
+}
+
+if ( isset( $options['s'] ) && $options['s'] ) {
 	$messages[] = array(
 		'role'    => 'system',
-		'content' => $initial_input,
+		'content' => $options['s'],
 	);
-	echo 'System: ', substr( $initial_input, 3 ), PHP_EOL;
+	echo 'System: ', $options['s'], PHP_EOL;
 	$initial_input = '';
+} elseif ( trim( $initial_input ) ) {
+	echo '> ', $initial_input, PHP_EOL;
 }
+
+$sel = false;
+$last_conversations = array();
+
+if ( isset( $options['r'] ) ) {
+	$options['r'] = intval( $options['r'] );
+	if ( $options['r'] <= 0 ) {
+		$options['r'] = 10;
+	}
+	$history_files = array();
+	for ( $i = 0; $i > -300; $i -= 20 ) {
+		$history_files = array_merge( $history_files, array_flip( glob( $history_base_directory . date( 'Y/m', $time - $i ) . '/history.*.txt' ) ) );
+		if ( count( $history_files ) >= $options['r'] ) {
+			break;
+		}
+	}
+	krsort( $history_files );
+
+	$length = $options['r'];
+	if ( isset( $options['l'] ) ) {
+		echo 'Resuming the last conversation.';
+	} else {
+		echo 'Resuming a conversation. ';
+	}
+	$sel = 'm';
+	$c = 0;
+	while ( 'm' === $sel ) {
+		$last_history_files = array_slice( array_keys( $history_files ), $c, $length );
+		if ( empty( $last_history_files ) ) {
+			if ( $c ) {
+				echo 'No more conversations.', PHP_EOL;
+			} else {
+				echo 'No previous conversation. Starting a new one:', PHP_EOL;
+				$sel = 0;
+				break;
+			}
+		}
+
+		if ( empty( $last_conversations ) && ! isset( $options['l'] ) ) {
+			echo 'Please choose one: ', PHP_EOL;
+		}
+
+		if ( !empty( $last_history_files ) ) {
+			$length = 10;
+			foreach ( $last_history_files as $k => $last_history_file ) {
+				$conversation_contents = file_get_contents( $last_history_file );
+				$split = preg_split( '/^> (.*)\n\n/m', trim( $conversation_contents ), -1, PREG_SPLIT_DELIM_CAPTURE );
+				if ( count( $split ) < 2 ) {
+					echo 'Empty history file: ', $last_history_file, PHP_EOL;
+					unset( $history_files[ $last_history_file ] );
+					unset( $last_history_files[ $k ] );
+					continue;
+				}
+				array_shift( $split );
+				$history_files[ $last_history_file ] = $split;
+				$answers = floor( count( $history_files[ $last_history_file ] ) / 2 );
+
+				$c = $c + 1;
+
+				if ( ! isset( $options['l'] ) ) {
+					echo PHP_EOL, $c, ') ', ltrim( $history_files[ $last_history_file ][0], '> ' );
+				}
+				echo ' (', $answers, ' answer', $answers % 2 ? '' : 's', ', ', str_word_count( $conversation_contents ), ' words)', PHP_EOL;
+				$last_conversations[ $c ] = $last_history_file;
+			}
+
+			krsort( $history_files );
+			if ( $c < $options['r'] ) {
+				continue;
+			}
+		}
+		echo PHP_EOL;
+		if ( isset( $options['l'] ) ) {
+			$sel = 1;
+			break;
+		}
+
+		if ( 1 === count( $last_history_files ) ) {
+			echo 'Resume this conversation (m for more): ';
+		} else {
+			echo 'Please enter the number of the conversation you want to resume (m for more): ';
+		}
+		$sel = readline();
+		if ( 1 === count( $last_history_files ) ) {
+			if ( $sel < 0 || 'y' === $sel ) {
+				$sel = 1;
+			} else {
+				$sel = 'm';
+			}
+		}
+	}
+	if ( $sel ) {
+		if ( ! isset( $last_conversations[ $sel ] ) ) {
+			echo 'Invalid selection.', PHP_EOL;
+		}
+		foreach ( $history_files[ $last_conversations[ $sel ] ] as $k => $message ) {
+			$messages[] = array(
+				'role'    => $k % 2 ? 'assistant' : 'user',
+				'content' => $message,
+			);
+
+			if ( 0 === $k % 2 ) {
+				echo '> ';
+			}
+			echo $message, PHP_EOL;
+		}
+	}
+}
+
+readline_clear_history();
+readline_read_history( $readline_history_file );
+
 $ch = curl_init();
 curl_setopt( $ch, CURLOPT_URL, 'https://api.openai.com/v1/chat/completions' );
 curl_setopt( $ch, CURLOPT_RETURNTRANSFER, 1 );
@@ -51,7 +208,7 @@ while ( true ) {
 			$multiline .= $input . PHP_EOL;
 			continue;
 		} else {
-			$input = $multiline;
+			$input = rtrim( $multiline );
 			// Finished with Multiline input.
 			$multiline = false;
 		}
@@ -68,13 +225,21 @@ while ( true ) {
 	}
 
 	readline_add_history( $input );
+	if ( ! $fp ) {
+		if ( ! file_exists( $history_directory ) ) {
+			mkdir( $history_directory, 0777, true );
+		}
+
+		if ( $sel && $last_conversations && isset( $last_conversations[ $sel ] ) ) {
+			copy( $last_conversations[ $sel ], $full_history_file );
+		}
+
+		$fp = fopen( $full_history_file, 'a' );
+	}
 	if ( ltrim( $input ) === $input ) {
 		// Persist history unless prepended by whitespace.
 		readline_write_history( $readline_history_file );
-		if ( empty( $messages ) ) {
-			fwrite( $fp, PHP_EOL . '---' . PHP_EOL . PHP_EOL );
-		}
-		fwrite( $fp, '> ' . $input . PHP_EOL );
+		fwrite( $fp, '> ' . $input . PHP_EOL . PHP_EOL );
 	}
 	$messages[] = array(
 		'role'    => 'user',
@@ -86,9 +251,9 @@ while ( true ) {
 		CURLOPT_POSTFIELDS,
 		json_encode(
 			array(
-				'model'      => 'gpt-3.5-turbo',
-				'messages'   => $messages,
-				'stream'     => true,
+				'model'        => 'gpt-3.5-turbo',
+				'messages'     => $messages,
+				'stream'       => true,
 			)
 		)
 	);
@@ -119,7 +284,6 @@ while ( true ) {
 	);
 
 	$output = curl_exec( $ch );
-
 	echo PHP_EOL;
 	$messages[] = array(
 		'role'    => 'assistant',
@@ -127,7 +291,7 @@ while ( true ) {
 	);
 	if ( ltrim( $input ) === $input ) {
 		// Persist history unless prepended by whitespace.
-		fwrite( $fp, $message . PHP_EOL );
+		fwrite( $fp, $message . PHP_EOL . PHP_EOL );
 	}
 }
 echo 'Bye.', PHP_EOL;
