@@ -18,6 +18,8 @@ It will keep your input history in a readline file `.history` (so that you can g
 
 It will also keep the conversation history in a directory `chats/` unless you prefix your input with whitespace, in that case the message and its response won't be kept.
 
+I recommend using an alias in your shell to have it available anywhere in your command line: `alias cgt 'php ~/chatgpt/chat.php'`
+
 ### Usage
 
 ```
