@@ -45,6 +45,9 @@ Example usage:
   $self -r 5
     Resume a conversation and list the last 5 to choose from.
 
+  $self -s "Only respond in emojis"
+    Have an interesting conversation 🙂
+
   $self Tell me a joke
     Starts a new conversation with the given message.
 

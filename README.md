@@ -44,6 +44,9 @@ Example usage:
   chat.php -r 5
     Resume a conversation and list the last 5 to choose from.
 
+  chat.php -s "Only respond in emojis"
+    Have an interesting conversation 🙂
+
   chat.php Tell me a joke
     Starts a new conversation with the given message.
 ```
