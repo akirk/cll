@@ -24,11 +24,12 @@ $options = getopt( 's:lhr::', array(), $initial_input );
 if ( isset( $options['h'] ) ) {
 	$self = basename( $_SERVER['argv'][0] );
 	echo <<<USAGE
-Usage: $self [-l] [-r [number]] [conversation_input]
+Usage: $self [-l] [-r [number]] [-s system_prompt] [conversation_input]
 
 Options:
-  -l                Resume last conversation.
-  -r [number]       Resume a previous conversation and list 'number' conversations (default: 10).
+  -l                 Resume last conversation.
+  -r [number]        Resume a previous conversation and list 'number' conversations (default: 10).
+  -s [system_prompt] Specify a system prompt preceeding the conversation.
 
 Arguments:
   conversation_input  Input for the first conversation.

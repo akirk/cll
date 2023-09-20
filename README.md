@@ -18,16 +18,17 @@ It will keep your input history in a readline file `.history` (so that you can g
 
 It will also keep the conversation history in a directory `chats/` unless you prefix your input with whitespace, in that case the message and its response won't be kept.
 
-I recommend using an alias in your shell to have it available anywhere in your command line: `alias cgt 'php ~/chatgpt/chat.php'`
+I recommend using an alias in your shell to have it available anywhere in your command line: `alias cgt='php ~/chatgpt/chat.php'`
 
 ### Usage
 
 ```
-Usage: chat.php [-l] [-r [number]] [conversation input]
+Usage: chat.php [-l] [-r [number]] [-s system_prompt] [conversation input]
 
 Options:
-  -l                Resume last conversation.
-  -r [number]       Resume a previous conversation and list 'number' conversations (default: 10).
+  -l                 Resume last conversation.
+  -r [number]        Resume a previous conversation and list 'number' conversations (default: 10).
+  -s [system_prompt] Specify a system prompt preceeding the conversation.
 
 Arguments:
   conversation input  Input for the first conversation.
