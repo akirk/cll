@@ -1,5 +1,5 @@
 <?php
-
+$version = '1.0.0';
 $openai_key = getenv( 'OPENAI_API_KEY', true );
 if ( empty( $openai_key ) ) {
 	echo 'Please set your OpenAI API key in the OPENAI_API_KEY environment variable:', PHP_EOL;
@@ -19,8 +19,13 @@ $time = time();
 $history_directory = $history_base_directory . date( 'Y/m', $time );
 $full_history_file = $history_directory . '/history.' . $time . '.txt';
 
-$options = getopt( 's:lhr::', array( 'help' ), $initial_input );
+$options = getopt( 's:lhr::', array( 'help', 'version' ), $initial_input );
 $system = false;
+
+if ( isset( $options['version'] ) ) {
+	echo basename( $_SERVER['argv'][0] ), ' version ', $version, PHP_EOL;
+	exit( 1 );
+}
 
 if ( isset( $options['h'] ) || isset( $options['help'] ) ) {
 	$self = basename( $_SERVER['argv'][0] );
