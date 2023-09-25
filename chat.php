@@ -126,14 +126,14 @@ if ( isset( $options['r'] ) ) {
 				}
 
 				$history_files[ $last_history_file ] = $split;
-				$answers = floor( count( $history_files[ $last_history_file ] ) / 2 );
+				$answers = intval( count( $history_files[ $last_history_file ] ) / 2 );
 
 				$c = $c + 1;
 
 				if ( ! isset( $options['l'] ) ) {
 					echo PHP_EOL, $c, ') ', ltrim( substr( $history_files[ $last_history_file ][0], 0, 100 ), '> ' );
 				}
-				echo ' (', $answers, ' answer', $answers % 2 ? '' : 's', ', ', str_word_count( $conversation_contents ), ' words)', PHP_EOL;
+				echo ' (', $answers, ' answer', $answers === 1 ? '' : 's', ', ', str_word_count( $conversation_contents ), ' words)', PHP_EOL;
 				$last_conversations[ $c ] = $last_history_file;
 				if ( isset( $options['l'] ) ) {
 					break;
