@@ -19,10 +19,10 @@ $time = time();
 $history_directory = $history_base_directory . date( 'Y/m', $time );
 $full_history_file = $history_directory . '/history.' . $time . '.txt';
 
-$options = getopt( 's:lhr::', array(), $initial_input );
+$options = getopt( 's:lhr::', array( 'help' ), $initial_input );
 $system = false;
 
-if ( isset( $options['h'] ) ) {
+if ( isset( $options['h'] ) || isset( $options['help'] ) ) {
 	$self = basename( $_SERVER['argv'][0] );
 	echo <<<USAGE
 Usage: $self [-l] [-r [number]] [-s system_prompt] [conversation_input]
