@@ -25,7 +25,7 @@ I recommend using an alias in your shell to have it available anywhere in your c
 ### Usage
 
 ```
-Usage: chat.php [-l] [-r [number]] [-s system_prompt] [conversation input]
+Usage: chat.php [-l] [-r [number]] [-s system_prompt] [-m model] [conversation input]
 
 Options:
   -l                 Resume last conversation.

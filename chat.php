@@ -1,5 +1,5 @@
 <?php
-$version = '1.0.0';
+$version = '1.1.0';
 $openai_key = getenv( 'OPENAI_API_KEY', true );
 $supported_models = array();
 $ansi = posix_isatty( STDOUT );
