@@ -2,27 +2,29 @@
 
 A simple command line chatbot using [OpenAI's GPT-3](https://openai.com/blog/openai-api/) or [Ollama](https://github.com/jmorganca/ollama) (offline) that uses streaming for faster responses.
 
+### OpenAI
+
 If you want to use OpenAI, you need to make your [OpenAI Key](https://platform.openai.com/account/api-keys) available as an environment variable:
 
 ```bash
 export OPENAI_API_KEY=sk-...
 ```
 
-For using Ollama, it needs to be available on localhost:11434.
+### Ollama
 
-Then run the script:
+For using Ollama, it needs to be available via HTTP on localhost:11434 (that's the default).  
 
-```bash
-php chat.php
-```
+### Usage
 
-It will keep your input history in a readline file `.history` (so that you can go back to old prompts using the up-key).
+With `chat.php -h` you'll see all available models. By default, `gpt-3.5-turbo` will be used if online. If offline, Ollama will be used, preferring `llama2`.
+
+The script will keep your input history in a readline file `.history` (so that you can go back to old prompts using the up-key).
 
 It will also keep the conversation history in a directory `chats/` unless you prefix your input with whitespace, in that case the message and its response won't be kept.
 
 I recommend using an alias in your shell to have it available anywhere in your command line: `alias cgt='php ~/chatgpt/chat.php'`
 
-### Usage
+### Parameters
 
 ```
 Usage: chat.php [-l] [-r [number]] [-s system_prompt] [-m model] [conversation input]
@@ -36,7 +38,7 @@ Arguments:
   conversation input  Input for the first conversation.
 
 Notes:
-  - To input multiline messages, send an empty message.
+  - To start the input of multiline messages, send an empty message.
   - To end the conversation, enter "bye".
 
 Example usage:

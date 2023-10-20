@@ -2,14 +2,10 @@
 $version = '1.1.0';
 $openai_key = getenv( 'OPENAI_API_KEY', true );
 $supported_models = array();
-$ansi = posix_isatty( STDOUT );
+$ansi = function_exists( 'posix_isatty' ) && posix_isatty( STDOUT );
 
-if ( ! empty( $openai_key ) ) {
-	$supported_models['gpt-3.5-turbo'] = 'openai';
-	$supported_models['gpt-3.5-turbo-16k'] = 'openai';
-	$supported_models['gpt-4'] = 'openai';
-	$supported_models['gpt-4-32k'] = 'openai';
-}
+putenv('RES_OPTIONS=retrans:1 retry:1 timeout:1 attempts:1');
+$online = gethostbyname( 'api.openai.com' ) !== 'api.openai.com';
 
 $ch = curl_init();
 curl_setopt( $ch, CURLOPT_RETURNTRANSFER, 1 );
@@ -28,11 +24,26 @@ $history_directory = $history_base_directory . date( 'Y/m', $time );
 
 $options = getopt( 's:lhm:r::', array( 'help', 'version' ), $initial_input );
 $system = false;
-$model = 'gpt-3.5-turbo';
-$model = 'llama2:latest';
+
+if ( $online && ! empty( $openai_key ) ) {
+	$supported_models['gpt-3.5-turbo'] = 'openai';
+	$supported_models['gpt-3.5-turbo-16k'] = 'openai';
+	$supported_models['gpt-4'] = 'openai';
+	$supported_models['gpt-4-32k'] = 'openai';
+}
+
 curl_setopt( $ch, CURLOPT_URL, 'http://localhost:11434/api/tags' );
 $ollama_models = json_decode( curl_exec( $ch ), true );
 if ( isset( $ollama_models['models'] ) ) {
+	usort( $ollama_models['models'], function( $a, $b ) {
+		// sort llama2 to the top.
+		if ( substr( $a['name'], 0, 6 ) === 'llama2' && substr( $b['name'], 0, 6 ) !== 'llama2'  ) {
+			return -1;
+		}
+
+		return $b['modified_at'] <=> $a['modified_at'];
+	} );
+
 	foreach ( $ollama_models['models'] as $m ) {
 		$supported_models[ $m['name'] ] = 'ollama';
 	}
@@ -42,9 +53,10 @@ if ( empty( $supported_models ) ) {
 	echo 'No supported models found.', PHP_EOL, PHP_EOL;
 	echo 'If you want to use ChatGTP, please set your OpenAI API key in the OPENAI_API_KEY environment variable:', PHP_EOL;
 	echo 'export OPENAI_API_KEY=sk-...', PHP_EOL, PHP_EOL;
-	echo 'If you want to use Ollama, please make sure it is in the path.', PHP_EOL;
+	echo 'If you want to use Ollama, please make sure it is accessible on localhost:11434', PHP_EOL;
 	exit( 1 );
 }
+$model = key( $supported_models );
 
 $supported_models_list = implode( ', ', array_keys( $supported_models ) );
 
@@ -54,6 +66,7 @@ if ( isset( $options['version'] ) ) {
 }
 
 if ( isset( $options['h'] ) || isset( $options['help'] ) ) {
+	$offline = ! $online ? "(we're offline)" : '';
 	$self = basename( $_SERVER['argv'][0] );
 	echo <<<USAGE
 Usage: $self [-l] [-r [number]] [-m model] [-s system_prompt] [conversation_input]
@@ -61,8 +74,8 @@ Usage: $self [-l] [-r [number]] [-m model] [-s system_prompt] [conversation_inpu
 Options:
   -l                 Resume last conversation.
   -r [number]        Resume a previous conversation and list 'number' conversations (default: 10).
+  -m [model]         Use a specific model. Default: $model
   -s [system_prompt] Specify a system prompt preceeding the conversation.
-  -m [system_prompt] Specify a system prompt preceeding the conversation.
 
 Arguments:
   conversation_input  Input for the first conversation.
@@ -86,7 +99,7 @@ Example usage:
 
   $self -m gpt-3.5-turbo-16k
     Use a ChatGPT model with 16k tokens instead of 4k.
-    Supported modes: $supported_models_list
+    Supported modes: $supported_models_list $offline
 
 
 USAGE;
