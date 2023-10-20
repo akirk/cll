@@ -1,11 +1,19 @@
 <?php
 $version = '1.0.0';
 $openai_key = getenv( 'OPENAI_API_KEY', true );
-if ( empty( $openai_key ) ) {
-	echo 'Please set your OpenAI API key in the OPENAI_API_KEY environment variable:', PHP_EOL;
-	echo 'export OPENAI_API_KEY=sk-...', PHP_EOL;
-	exit( 1 );
+$supported_models = array();
+$ansi = posix_isatty( STDOUT );
+
+if ( ! empty( $openai_key ) ) {
+	$supported_models['gpt-3.5-turbo'] = 'openai';
+	$supported_models['gpt-3.5-turbo-16k'] = 'openai';
+	$supported_models['gpt-4'] = 'openai';
+	$supported_models['gpt-4-32k'] = 'openai';
 }
+
+$ch = curl_init();
+curl_setopt( $ch, CURLOPT_RETURNTRANSFER, 1 );
+curl_setopt( $ch, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1 );
 
 $readline_history_file = __DIR__ . '/.history';
 $history_base_directory = __DIR__ . '/chats/';
@@ -17,10 +25,28 @@ if ( ! file_exists( $history_base_directory ) ) {
 }
 $time = time();
 $history_directory = $history_base_directory . date( 'Y/m', $time );
-$full_history_file = $history_directory . '/history.' . $time . '.txt';
 
-$options = getopt( 's:lhr::', array( 'help', 'version' ), $initial_input );
+$options = getopt( 's:lhm:r::', array( 'help', 'version' ), $initial_input );
 $system = false;
+$model = 'gpt-3.5-turbo';
+$model = 'llama2:latest';
+curl_setopt( $ch, CURLOPT_URL, 'http://localhost:11434/api/tags' );
+$ollama_models = json_decode( curl_exec( $ch ), true );
+if ( isset( $ollama_models['models'] ) ) {
+	foreach ( $ollama_models['models'] as $m ) {
+		$supported_models[ $m['name'] ] = 'ollama';
+	}
+}
+
+if ( empty( $supported_models ) ) {
+	echo 'No supported models found.', PHP_EOL, PHP_EOL;
+	echo 'If you want to use ChatGTP, please set your OpenAI API key in the OPENAI_API_KEY environment variable:', PHP_EOL;
+	echo 'export OPENAI_API_KEY=sk-...', PHP_EOL, PHP_EOL;
+	echo 'If you want to use Ollama, please make sure it is in the path.', PHP_EOL;
+	exit( 1 );
+}
+
+$supported_models_list = implode( ', ', array_keys( $supported_models ) );
 
 if ( isset( $options['version'] ) ) {
 	echo basename( $_SERVER['argv'][0] ), ' version ', $version, PHP_EOL;
@@ -30,12 +56,13 @@ if ( isset( $options['version'] ) ) {
 if ( isset( $options['h'] ) || isset( $options['help'] ) ) {
 	$self = basename( $_SERVER['argv'][0] );
 	echo <<<USAGE
-Usage: $self [-l] [-r [number]] [-s system_prompt] [conversation_input]
+Usage: $self [-l] [-r [number]] [-m model] [-s system_prompt] [conversation_input]
 
 Options:
   -l                 Resume last conversation.
   -r [number]        Resume a previous conversation and list 'number' conversations (default: 10).
   -s [system_prompt] Specify a system prompt preceeding the conversation.
+  -m [system_prompt] Specify a system prompt preceeding the conversation.
 
 Arguments:
   conversation_input  Input for the first conversation.
@@ -57,12 +84,47 @@ Example usage:
   $self Tell me a joke
     Starts a new conversation with the given message.
 
+  $self -m gpt-3.5-turbo-16k
+    Use a ChatGPT model with 16k tokens instead of 4k.
+    Supported modes: $supported_models_list
+
+
 USAGE;
 	exit( 1 );
 }
 $messages = array();
 $initial_input = trim( implode( ' ', array_slice( $_SERVER['argv'], $initial_input ) ) . ' ' );
 $fp = false;
+
+if ( isset( $options['m'] ) ) {
+	$model = false;
+	if ( isset( $supported_models[$options['m']] ) ) {
+		$model = $options['m'];
+	}
+	if ( ! $model ) {
+		foreach ( array_keys( $supported_models ) as $m ) {
+			if ( false !== strpos( $m, $options['m'] ) ) {
+				$model = $m;
+				break;
+			}
+		}
+	}
+	if ( ! $model ) {
+		foreach ($supported_models as $m => $provider ) {
+			if ( $provider === $options['m'] ) {
+				$model = $m;
+				break;
+			}
+		}
+	}
+	if ( ! $model ) {
+		echo 'Unsupported model. Valid values: ', $supported_models_list, PHP_EOL;
+		exit( 1 );
+	}
+}
+echo 'Model: ', $model, PHP_EOL;
+
+$full_history_file = $history_directory . '/history.' . $time . '.' . preg_replace( '/[^a-z0-9]+/', '-', $model ) . '.txt';
 
 if ( isset( $options['l'] ) ) {
 	$options['r'] = 1;
@@ -78,7 +140,7 @@ if ( isset( $options['r'] ) ) {
 	}
 	$history_files = array();
 	for ( $i = 0; $i > -300; $i -= 20 ) {
-		$history_files = array_merge( $history_files, array_flip( glob( $history_base_directory . date( 'Y/m', $time - $i ) . '/history.*.txt' ) ) );
+		$history_files = array_merge( $history_files, array_flip( glob( $history_base_directory . date( 'Y/m', $time - $i ) . '/history.*' ) ) );
 		if ( count( $history_files ) >= $options['r'] ) {
 			break;
 		}
@@ -112,13 +174,34 @@ if ( isset( $options['r'] ) ) {
 		if ( !empty( $last_history_files ) ) {
 			$length = 10;
 			foreach ( $last_history_files as $k => $last_history_file ) {
+				$filename_parts = explode( '.', $last_history_file );
+				$used_model = $filename_parts[2];
+				if ( 'txt' === $used_model ) {
+					$used_model = '';
+				} else {
+					$used_model .= ', ';
+				}
+				$ago = '';
+				$unix_timestamp = $filename_parts[1];
+				if ( is_numeric( $unix_timestamp ) ) {
+					$ago_in_seconds = $time - $unix_timestamp;
+					if ( $ago_in_seconds > 60 * 60 * 24 ) {
+						$ago = round( $ago_in_seconds / ( 60 * 60 * 24 ) ) . 'd ago, ';
+					} elseif ( $ago_in_seconds > 60 * 60 ) {
+						$ago = round( $ago_in_seconds / ( 60 * 60 ) ) . 'h ago, ';
+					} elseif ( $ago_in_seconds > 60 ) {
+						$ago = round( $ago_in_seconds / 60 ) . 'm ago, ';
+					} else {
+						$ago = $ago_in_seconds . 's ago, ';
+					}
+				}
 				$conversation_contents = file_get_contents( $last_history_file );
 				$split = preg_split( '/^>(?: ([^\n]*)|>> (.*)\n\.)\n\n/ms', trim( $conversation_contents ), -1, PREG_SPLIT_DELIM_CAPTURE );
 				$split = array_filter( $split );
 				$split = array_values( $split );
 
 				if ( count( $split ) < 2 ) {
-					echo 'Empty history file: ', $last_history_file, PHP_EOL;
+					// echo 'Empty history file: ', $last_history_file, PHP_EOL;
 					unset( $history_files[ $last_history_file ] );
 					unset( $last_history_files[ $k ] );
 					continue;
@@ -136,9 +219,26 @@ if ( isset( $options['r'] ) ) {
 				$c = $c + 1;
 
 				if ( ! isset( $options['l'] ) ) {
-					echo PHP_EOL, $c, ') ', ltrim( substr( $history_files[ $last_history_file ][0], 0, 100 ), '> ' );
+					echo PHP_EOL;
+					echo $c, ') ';
+					if ( $ansi ) {
+						echo "\033[1m";
+					}
+					echo ltrim( substr( $history_files[ $last_history_file ][0], 0, 100 ), '> ' );
+					if ( $ansi ) {
+						echo "\033[0m";
+						echo PHP_EOL;
+						echo str_repeat( ' ', strlen( $c . ') ' ) );
+					} else {
+						echo ' (';
+					}
 				}
-				echo ' (', $answers, ' answer', $answers === 1 ? '' : 's', ', ', str_word_count( $conversation_contents ), ' words)', PHP_EOL;
+				echo $ago, $used_model, $answers, ' answer', $answers === 1 ? '' : 's', ', ', str_word_count( $conversation_contents ), ' words';
+				if ( ! $ansi ) {
+					echo ')';
+				}
+				echo PHP_EOL;
+
 				$last_conversations[ $c ] = $last_history_file;
 				if ( isset( $options['l'] ) ) {
 					break;
@@ -214,19 +314,79 @@ if ( isset( $options['r'] ) ) {
 readline_clear_history();
 readline_read_history( $readline_history_file );
 
-$ch = curl_init();
-curl_setopt( $ch, CURLOPT_URL, 'https://api.openai.com/v1/chat/completions' );
-curl_setopt( $ch, CURLOPT_RETURNTRANSFER, 1 );
-curl_setopt( $ch, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1 );
-curl_setopt(
-	$ch,
-	CURLOPT_HTTPHEADER,
-	array(
-		'Content-Type: application/json',
-		'Authorization: Bearer ' . $openai_key,
-		'Transfer-Encoding: chunked',
-	)
-);
+if ( 'openai' === $supported_models[$model] ) {
+	curl_setopt( $ch, CURLOPT_URL, 'https://api.openai.com/v1/chat/completions' );
+
+	curl_setopt(
+		$ch,
+		CURLOPT_HTTPHEADER,
+		array(
+			'Content-Type: application/json',
+			'Authorization: Bearer ' . $openai_key,
+			'Transfer-Encoding: chunked',
+		)
+	);
+
+	curl_setopt(
+		$ch,
+		CURLOPT_WRITEFUNCTION,
+		function ( $curl, $data ) use ( &$message ) {
+			if ( 200 !== curl_getinfo( $curl, CURLINFO_HTTP_CODE ) ) {
+				var_dump( curl_getinfo( $curl, CURLINFO_HTTP_CODE ) );
+				$error = json_decode( trim( $data ), true );
+				echo 'Error: ', $error['error']['message'], PHP_EOL;
+				return strlen( $data );
+			}
+			$items = explode( 'data: ', $data );
+			foreach ( $items as $item ) {
+				$json = json_decode( trim( $item ), true );
+				if ( isset( $json['choices'][0]['delta']['content'] ) ) {
+					echo $json['choices'][0]['delta']['content'];
+					$message .= $json['choices'][0]['delta']['content'];
+				}
+			}
+
+			return strlen( $data );
+		}
+	);
+} elseif ( 'ollama' === $supported_models[$model] ) {
+	curl_setopt( $ch, CURLOPT_URL, 'http://localhost:11434/api/generate' );
+
+	curl_setopt(
+		$ch,
+		CURLOPT_HTTPHEADER,
+		array(
+			'Content-Type: application/json',
+			'Transfer-Encoding: chunked',
+		)
+	);
+
+	curl_setopt(
+		$ch,
+		CURLOPT_WRITEFUNCTION,
+		function ( $curl, $data ) use ( &$message ) {
+			if ( 200 !== curl_getinfo( $curl, CURLINFO_HTTP_CODE ) ) {
+				var_dump( curl_getinfo( $curl, CURLINFO_HTTP_CODE ) );
+				$error = json_decode( trim( $data ), true );
+				echo 'Error: ', $error['error']['message'], PHP_EOL;
+				return strlen( $data );
+			}
+			$items = explode( PHP_EOL, $data );
+			foreach ( $items as $item ) {
+				$json = json_decode( trim( $item ), true );
+				if ( isset( $json['response'] ) ) {
+					echo $json['response'];
+					$message .= $json['response'];
+				}
+			}
+
+			return strlen( $data );
+		}
+	);
+
+}
+
+
 
 // Start chatting.
 $multiline = false;
@@ -242,7 +402,7 @@ while ( true ) {
 			$multiline .= $input . PHP_EOL;
 			continue;
 		} else {
-			$input = rtrim( $multiline );
+			$input = rtrim( $multiline ) . PHP_EOL;
 			// Finished with Multiline input.
 			$multiline = false;
 		}
@@ -293,44 +453,50 @@ while ( true ) {
 		'content' => $input,
 	);
 
-	curl_setopt(
-		$ch,
-		CURLOPT_POSTFIELDS,
-		json_encode(
-			array(
-				'model'        => 'gpt-3.5-turbo',
-				'messages'     => $messages,
-				'stream'       => true,
+	if ( 'openai' === $supported_models[$model] ) {
+		curl_setopt(
+			$ch,
+			CURLOPT_POSTFIELDS,
+			json_encode(
+				array(
+					'model'        => $model,
+					'messages'     => $messages,
+					'stream'       => true,
+				)
 			)
-		)
-	);
+		);
+	} elseif ( 'ollama' === $supported_models[$model] ) {
+		$prompt = '';
+		foreach ( $messages as $message ) {
+			if ( $message['role'] === 'user' ) {
+				$prompt .= "### User:\n";
+			} elseif ( $message['role'] === 'assistant' ) {
+				$prompt .= "### Response:\n";
+			}
+
+			$prompt .= $message['content'] . PHP_EOL;
+		}
+
+		curl_setopt(
+			$ch,
+			CURLOPT_POSTFIELDS,
+			json_encode(
+				array(
+					'model'        => $model,
+					'prompt'       => $prompt,
+					'stream'       => true,
+				)
+			)
+		);
+	}
 	echo PHP_EOL;
 	$message = '';
 
-	curl_setopt(
-		$ch,
-		CURLOPT_WRITEFUNCTION,
-		function ( $curl, $data ) use ( &$message ) {
-			if ( 200 !== curl_getinfo( $curl, CURLINFO_HTTP_CODE ) ) {
-				var_dump( curl_getinfo( $curl, CURLINFO_HTTP_CODE ) );
-				$error = json_decode( trim( $data ), true );
-				echo 'Error: ', $error['error']['message'], PHP_EOL;
-				return strlen( $data );
-			}
-			$items = explode( 'data: ', $data );
-			foreach ( $items as $item ) {
-				$json = json_decode( trim( $item ), true );
-				if ( isset( $json['choices'][0]['delta']['content'] ) ) {
-					echo $json['choices'][0]['delta']['content'];
-					$message .= $json['choices'][0]['delta']['content'];
-				}
-			}
-
-			return strlen( $data );
-		}
-	);
-
 	$output = curl_exec( $ch );
+	if ( curl_error( $ch ) ) {
+		echo 'CURL Error: ', curl_error( $ch ), PHP_EOL;
+		exit( 1 );
+	}
 	echo PHP_EOL;
 	$messages[] = array(
 		'role'    => 'assistant',
