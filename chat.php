@@ -381,14 +381,18 @@ if ( 'openai' === $supported_models[$model] ) {
 			if ( 200 !== curl_getinfo( $curl, CURLINFO_HTTP_CODE ) ) {
 				var_dump( curl_getinfo( $curl, CURLINFO_HTTP_CODE ) );
 				$error = json_decode( trim( $data ), true );
-				echo 'Error: ', $error['error']['message'], PHP_EOL;
+				var_dump( $error );
 				return strlen( $data );
 			}
 			$items = explode( PHP_EOL, $data );
 			foreach ( $items as $item ) {
 				$json = json_decode( trim( $item ), true );
 				if ( isset( $json['response'] ) ) {
-					echo $json['response'];
+					if ( '' === $message ) {
+						echo ltrim( $json['response'] );
+					} else {
+						echo $json['response'];
+					}
 					$message .= $json['response'];
 				}
 			}
@@ -482,9 +486,9 @@ while ( true ) {
 		$prompt = '';
 		foreach ( $messages as $message ) {
 			if ( $message['role'] === 'user' ) {
-				$prompt .= "### User:\n";
+				$prompt .= '### User:' . PHP_EOL;
 			} elseif ( $message['role'] === 'assistant' ) {
-				$prompt .= "### Response:\n";
+				$prompt .= '### Response:' . PHP_EOL;
 			}
 
 			$prompt .= $message['content'] . PHP_EOL;
