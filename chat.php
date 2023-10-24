@@ -37,8 +37,11 @@ $ollama_models = json_decode( curl_exec( $ch ), true );
 if ( isset( $ollama_models['models'] ) ) {
 	usort( $ollama_models['models'], function( $a, $b ) {
 		// sort llama2 to the top.
-		if ( substr( $a['name'], 0, 6 ) === 'llama2' && substr( $b['name'], 0, 6 ) !== 'llama2'  ) {
+		if ( substr( $a['name'], 0, 6 ) === 'llama2' && substr( $b['name'], 0, 6 ) !== 'llama2' ) {
 			return -1;
+		}
+		if ( substr( $b['name'], 0, 6 ) === 'llama2' && substr( $a['name'], 0, 6 ) !== 'llama2' ) {
+			return 1;
 		}
 
 		return $b['modified_at'] <=> $a['modified_at'];
