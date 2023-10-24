@@ -319,7 +319,7 @@ if ( isset( $options['r'] ) ) {
 		'content' => $system,
 	) );
 	echo 'System prompt: ', $system, PHP_EOL;
-	$initial_input = '';
+	echo '> ', $initial_input, PHP_EOL;
 } elseif ( trim( $initial_input ) ) {
 	echo '> ', $initial_input, PHP_EOL;
 }
