@@ -14,7 +14,7 @@ curl_setopt( $ch, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1 );
 $readline_history_file = __DIR__ . '/.history';
 $history_base_directory = __DIR__ . '/chats/';
 if ( ! file_exists( $history_base_directory ) ) {
-	if ( mkdir( $history_base_directory) ) {
+	if ( ! mkdir( $history_base_directory ) ) {
 		echo 'Could not create history directory: ', $history_base_directory, PHP_EOL;
 		exit( 1 );
 	}
