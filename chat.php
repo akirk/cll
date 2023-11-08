@@ -322,7 +322,9 @@ if ( isset( $options['r'] ) ) {
 		'content' => $system,
 	) );
 	echo 'System prompt: ', $system, PHP_EOL;
-	echo '> ', $initial_input, PHP_EOL;
+	if ( trim( $initial_input ) ) {
+		echo '> ', $initial_input, PHP_EOL;
+	}
 } elseif ( trim( $initial_input ) ) {
 	echo '> ', $initial_input, PHP_EOL;
 }
@@ -332,7 +334,7 @@ readline_read_history( $readline_history_file );
 
 if ( 'openai' === $supported_models[$model] ) {
 	curl_setopt( $ch, CURLOPT_URL, 'https://api.openai.com/v1/chat/completions' );
-
+	$chunk_overflow = '';
 	curl_setopt(
 		$ch,
 		CURLOPT_HTTPHEADER,
@@ -346,7 +348,7 @@ if ( 'openai' === $supported_models[$model] ) {
 	curl_setopt(
 		$ch,
 		CURLOPT_WRITEFUNCTION,
-		function ( $curl, $data ) use ( &$message ) {
+		function ( $curl, $data ) use ( &$message, &$chunk_overflow ) {
 			if ( 200 !== curl_getinfo( $curl, CURLINFO_HTTP_CODE ) ) {
 				var_dump( curl_getinfo( $curl, CURLINFO_HTTP_CODE ) );
 				$error = json_decode( trim( $data ), true );
@@ -355,10 +357,20 @@ if ( 'openai' === $supported_models[$model] ) {
 			}
 			$items = explode( 'data: ', $data );
 			foreach ( $items as $item ) {
-				$json = json_decode( trim( $item ), true );
+				if ( ! $item ) {
+					continue;
+				}
+				$json = json_decode( trim( $chunk_overflow . $item ), true );
+				if ( $json ) {
+					$chunk_overflow = '';
+				} else {
+					$json = json_decode( trim( $item ), true );
+				}
 				if ( isset( $json['choices'][0]['delta']['content'] ) ) {
 					echo $json['choices'][0]['delta']['content'];
 					$message .= $json['choices'][0]['delta']['content'];
+				} else {
+					$chunk_overflow = $item;
 				}
 			}
 
