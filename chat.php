@@ -1,5 +1,5 @@
 <?php
-$version = '1.1.0';
+$version = '1.1.1';
 $openai_key = getenv( 'OPENAI_API_KEY', true );
 $supported_models = array();
 $ansi = function_exists( 'posix_isatty' ) && posix_isatty( STDOUT );
@@ -22,14 +22,14 @@ if ( ! file_exists( $history_base_directory ) ) {
 $time = time();
 $history_directory = $history_base_directory . date( 'Y/m', $time );
 
-$options = getopt( 's:lhm:r::', array( 'help', 'version' ), $initial_input );
+$options = getopt( 'ds:lhm:r::', array( 'help', 'version' ), $initial_input );
 $system = false;
 
 if ( $online && ! empty( $openai_key ) ) {
-	$supported_models['gpt-3.5-turbo'] = 'openai';
-	$supported_models['gpt-3.5-turbo-16k'] = 'openai';
-	$supported_models['gpt-4'] = 'openai';
-	$supported_models['gpt-4-32k'] = 'openai';
+	$supported_models['gpt-3.5-turbo'] = 'OpenAI';
+	$supported_models['gpt-3.5-turbo-16k'] = 'OpenAI';
+	$supported_models['gpt-4'] = 'OpenAI';
+	$supported_models['gpt-4-32k'] = 'OpenAI';
 }
 
 curl_setopt( $ch, CURLOPT_URL, 'http://localhost:11434/api/tags' );
@@ -48,7 +48,7 @@ if ( isset( $ollama_models['models'] ) ) {
 	} );
 
 	foreach ( $ollama_models['models'] as $m ) {
-		$supported_models[ $m['name'] ] = 'ollama';
+		$supported_models[ $m['name'] ] = 'Ollama (local)';
 	}
 }
 
@@ -77,6 +77,7 @@ Usage: $self [-l] [-r [number]] [-m model] [-s system_prompt] [conversation_inpu
 Options:
   -l                 Resume last conversation.
   -r [number]        Resume a previous conversation and list 'number' conversations (default: 10).
+  -d                 Ignore the model's answer.
   -m [model]         Use a specific model. Default: $model
   -s [system_prompt] Specify a system prompt preceeding the conversation.
 
@@ -90,6 +91,9 @@ Notes:
 Example usage:
   $self -l
     Resumes the last conversation.
+
+  $self -ld -m llama2
+    Reasks the previous question.
 
   $self -r 5
     Resume a conversation and list the last 5 to choose from.
@@ -138,7 +142,7 @@ if ( isset( $options['m'] ) ) {
 		exit( 1 );
 	}
 }
-echo 'Model: ', $model, PHP_EOL;
+echo 'Model: ', $model, ' via ' . $supported_models[$model], PHP_EOL;
 
 $full_history_file = $history_directory . '/history.' . $time . '.' . preg_replace( '/[^a-z0-9]+/', '-', $model ) . '.txt';
 
@@ -165,7 +169,7 @@ if ( isset( $options['r'] ) ) {
 
 	$length = $options['r'];
 	if ( isset( $options['l'] ) ) {
-		echo 'Resuming the last conversation.';
+		echo 'Resuming the last conversation.', PHP_EOL;
 	} else {
 		echo 'Resuming a conversation. ';
 	}
@@ -304,6 +308,11 @@ if ( isset( $options['r'] ) ) {
 			) );
 		}
 		foreach ( $history_files[ $last_conversations[ $sel ] ] as $k => $message ) {
+			if ( isset( $options['d'] ) && $k % 2 ) {
+				// Ignore assistant answers.
+				continue;
+			}
+
 			$messages[] = array(
 				'role'    => $k % 2 ? 'assistant' : 'user',
 				'content' => $message,
@@ -314,6 +323,11 @@ if ( isset( $options['r'] ) ) {
 			}
 			echo $message, PHP_EOL;
 		}
+		if ( isset( $options['d'] ) ) {
+			$initial_input = ' ';
+			// Answer the question right away.
+		}
+
 	}
 } elseif ( isset( $options['s'] ) && $options['s'] ) {
 	$system = $options['s'];
@@ -332,7 +346,7 @@ if ( isset( $options['r'] ) ) {
 readline_clear_history();
 readline_read_history( $readline_history_file );
 
-if ( 'openai' === $supported_models[$model] ) {
+if ( 'OpenAI' === $supported_models[$model] ) {
 	curl_setopt( $ch, CURLOPT_URL, 'https://api.openai.com/v1/chat/completions' );
 	$chunk_overflow = '';
 	curl_setopt(
@@ -377,7 +391,7 @@ if ( 'openai' === $supported_models[$model] ) {
 			return strlen( $data );
 		}
 	);
-} elseif ( 'ollama' === $supported_models[$model] ) {
+} elseif ( 'Ollama (local)' === $supported_models[$model] ) {
 	curl_setopt( $ch, CURLOPT_URL, 'http://localhost:11434/api/generate' );
 
 	curl_setopt(
@@ -417,8 +431,6 @@ if ( 'openai' === $supported_models[$model] ) {
 	);
 
 }
-
-
 
 // Start chatting.
 $multiline = false;
@@ -477,7 +489,7 @@ while ( true ) {
 		if ( false === strpos( $input, PHP_EOL ) ) {
 			fwrite( $fp, '> ' . $input . PHP_EOL . PHP_EOL );
 		} else {
-			fwrite( $fp, '>>> ' . $input . PHP_EOL . '.' . PHP_EOL );
+			fwrite( $fp, '>>> ' . $input . PHP_EOL . '.' . PHP_EOL . PHP_EOL );
 		}
 	}
 	$messages[] = array(
@@ -485,7 +497,7 @@ while ( true ) {
 		'content' => $input,
 	);
 
-	if ( 'openai' === $supported_models[$model] ) {
+	if ( 'OpenAI' === $supported_models[$model] ) {
 		curl_setopt(
 			$ch,
 			CURLOPT_POSTFIELDS,
@@ -497,7 +509,7 @@ while ( true ) {
 				)
 			)
 		);
-	} elseif ( 'ollama' === $supported_models[$model] ) {
+	} elseif ( 'Ollama (local)' === $supported_models[$model] ) {
 		$prompt = '';
 		foreach ( $messages as $message ) {
 			if ( $message['role'] === 'user' ) {
