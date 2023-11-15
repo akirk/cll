@@ -4,8 +4,14 @@ $openai_key = getenv( 'OPENAI_API_KEY', true );
 $supported_models = array();
 $ansi = function_exists( 'posix_isatty' ) && posix_isatty( STDOUT );
 
-putenv('RES_OPTIONS=retrans:1 retry:1 timeout:1 attempts:1');
-$online = gethostbyname( 'api.openai.com' ) !== 'api.openai.com';
+$options = getopt( 'ds:lhm:r::', array( 'help', 'version' ), $initial_input );
+
+if ( ! isset( $options['m'] ) ) {
+	putenv('RES_OPTIONS=retrans:1 retry:1 timeout:1 attempts:1');
+	$online = gethostbyname( 'api.openai.com.' ) !== 'api.openai.com.';
+} else {
+	$online = true;
+}
 
 $ch = curl_init();
 curl_setopt( $ch, CURLOPT_RETURNTRANSFER, 1 );
@@ -22,7 +28,6 @@ if ( ! file_exists( $history_base_directory ) ) {
 $time = time();
 $history_directory = $history_base_directory . date( 'Y/m', $time );
 
-$options = getopt( 'ds:lhm:r::', array( 'help', 'version' ), $initial_input );
 $system = false;
 
 if ( $online && ! empty( $openai_key ) ) {
