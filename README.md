@@ -16,7 +16,7 @@ For using Ollama, it needs to be available via HTTP on localhost:11434 (that's t
 
 ### Usage
 
-With `chat.php -h` you'll see all available models. By default, `gpt-3.5-turbo` will be used if online. If offline, Ollama will be used, preferring `llama2`.
+With `cll -h` you'll see all available models. By default, `gpt-3.5-turbo` will be used if online. If offline, Ollama will be used, preferring `llama2`.
 
 The script will keep your input history in a readline file `.history` (so that you can go back to old prompts using the up-key).
 
