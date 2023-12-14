@@ -1,10 +1,10 @@
 <?php
-$version = '1.1.1';
+$version = '1.1.2';
 $openai_key = getenv( 'OPENAI_API_KEY', true );
 $supported_models = array();
 $ansi = function_exists( 'posix_isatty' ) && posix_isatty( STDOUT );
 
-$options = getopt( 'ds:lhm:r::', array( 'help', 'version' ), $initial_input );
+$options = getopt( 'ds:lvhm:r::', array( 'help', 'version' ), $initial_input );
 
 if ( ! isset( $options['m'] ) ) {
 	putenv('RES_OPTIONS=retrans:1 retry:1 timeout:1 attempts:1');
@@ -16,6 +16,10 @@ if ( ! isset( $options['m'] ) ) {
 $ch = curl_init();
 curl_setopt( $ch, CURLOPT_RETURNTRANSFER, 1 );
 curl_setopt( $ch, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1 );
+
+function dontAutoComplete ($input, $index) { return []; }
+
+readline_completion_function("dontAutoComplete");
 
 $readline_history_file = __DIR__ . '/.history';
 $history_base_directory = __DIR__ . '/chats/';
@@ -83,6 +87,7 @@ Options:
   -l                 Resume last conversation.
   -r [number]        Resume a previous conversation and list 'number' conversations (default: 10).
   -d                 Ignore the model's answer.
+  -v                 Be verbose.
   -m [model]         Use a specific model. Default: $model
   -s [system_prompt] Specify a system prompt preceeding the conversation.
 
@@ -119,6 +124,16 @@ USAGE;
 }
 $messages = array();
 $initial_input = trim( implode( ' ', array_slice( $_SERVER['argv'], $initial_input ) ) . ' ' );
+$stdin = false;
+
+$fp_stdin = fopen( 'php://stdin', 'r' );
+$stat = fstat( $fp_stdin );
+if ( $stat['size'] > 0 ) {
+	$initial_input = trim( $initial_input . PHP_EOL . fread( $fp_stdin, $stat['size'] ) );
+	$stdin = true;
+}
+fclose( $fp_stdin );
+
 $fp = false;
 
 if ( isset( $options['m'] ) ) {
@@ -143,11 +158,13 @@ if ( isset( $options['m'] ) ) {
 		}
 	}
 	if ( ! $model ) {
-		echo 'Unsupported model. Valid values: ', $supported_models_list, PHP_EOL;
+		fprintf( STDERR, 'Unsupported model. Valid values: ' . $supported_models_list . PHP_EOL );
 		exit( 1 );
 	}
 }
-echo 'Model: ', $model, ' via ' . $supported_models[$model], PHP_EOL;
+if ( isset( $options['v'] ) ) {
+	fprintf( STDERR, 'Model: ' . $model . ' via ' . $supported_models[$model] . PHP_EOL );
+}
 
 $full_history_file = $history_directory . '/history.' . $time . '.' . preg_replace( '/[^a-z0-9]+/', '-', $model ) . '.txt';
 
@@ -340,12 +357,18 @@ if ( isset( $options['r'] ) ) {
 		'role'    => 'system',
 		'content' => $system,
 	) );
-	echo 'System prompt: ', $system, PHP_EOL;
+	if ( ! $stdin || isset( $options['v'] ) ) {
+		echo 'System prompt: ', $system, PHP_EOL;
+	}
 	if ( trim( $initial_input ) ) {
-		echo '> ', $initial_input, PHP_EOL;
+		if ( ! $stdin || isset( $options['v'] ) ) {
+			echo '> ', $initial_input, PHP_EOL;
+		}
 	}
 } elseif ( trim( $initial_input ) ) {
-	echo '> ', $initial_input, PHP_EOL;
+	if ( ! $stdin || isset( $options['v'] ) ) {
+		echo '> ', $initial_input, PHP_EOL;
+	}
 }
 
 readline_clear_history();
@@ -538,7 +561,9 @@ while ( true ) {
 			)
 		);
 	}
-	echo PHP_EOL;
+	if ( ! $stdin || isset( $options['v'] ) ) {
+		echo PHP_EOL;
+	}
 	$message = '';
 
 	$output = curl_exec( $ch );
@@ -546,7 +571,9 @@ while ( true ) {
 		echo 'CURL Error: ', curl_error( $ch ), PHP_EOL;
 		exit( 1 );
 	}
-	echo PHP_EOL;
+	if ( ! $stdin || isset( $options['v'] ) ) {
+		echo PHP_EOL;
+	}
 	$messages[] = array(
 		'role'    => 'assistant',
 		'content' => $message,
@@ -555,6 +582,8 @@ while ( true ) {
 		// Persist history unless prepended by whitespace.
 		fwrite( $fp, $message . PHP_EOL . PHP_EOL );
 	}
+	if ( $stdin ) {
+		break;
+	}
 }
-echo 'Bye.', PHP_EOL;
 fclose( $fp );
