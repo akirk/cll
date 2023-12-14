@@ -1,4 +1,4 @@
-# chat-cli
+# cll
 
 A simple command line chatbot using [OpenAI's GPT-3](https://openai.com/blog/openai-api/) or [Ollama](https://github.com/jmorganca/ollama) (offline) that uses streaming for faster responses.
 
