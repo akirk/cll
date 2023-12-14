@@ -1,0 +1,10 @@
+#!/bin/bash
+
+PHP=$(which php)
+
+if [ -x "$PHP" ]; then
+    # Invoke PHP script
+    "$PHP" "$(dirname "$0")/cll.php" $*
+else
+    echo "PHP interpreter not found. Please make sure PHP is installed on your system."
+fi

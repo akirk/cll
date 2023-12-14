@@ -22,12 +22,12 @@ The script will keep your input history in a readline file `.history` (so that y
 
 It will also keep the conversation history in a directory `chats/` unless you prefix your input with whitespace, in that case the message and its response won't be kept.
 
-I recommend using an alias in your shell to have it available anywhere in your command line: `alias cgt='php ~/chatgpt/chat.php'`
+I recommend using an alias in your shell to have it available anywhere in your command line: `alias cll='php ~/chatgpt/cll.php'` or alternatively put the directory in your path so that the `cll` shell script can invoke php.
 
 ### Parameters
 
 ```
-Usage: chat.php [-l] [-r [number]] [-s system_prompt] [-m model] [conversation input]
+Usage: cll [-l] [-r [number]] [-s system_prompt] [-m model] [conversation input]
 
 Options:
   -l                 Resume last conversation.
@@ -42,19 +42,19 @@ Notes:
   - To end the conversation, enter "bye".
 
 Example usage:
-  chat.php -l
+  cll -l
     Resumes the last conversation.
 
-  chat.php -r 5
+  cll -r 5
     Resume a conversation and list the last 5 to choose from.
 
-  chat.php -s "Only respond in emojis"
+  cll -s "Only respond in emojis"
     Have an interesting conversation 🙂
 
-  chat.php Tell me a joke
+  cll Tell me a joke
     Starts a new conversation with the given message.
 
-  chat.php -m gpt-3.5-turbo-16k
+  cll -m gpt-3.5-turbo-16k
     Use a ChatGPT model with 16k tokens instead of 4k.
     Supported modes: gpt-3.5-turbo, gpt-3.5-turbo-16k, gpt-4, gpt-4-32k, codellama:latest, llama2:latest
 ```
