@@ -35,10 +35,29 @@ $history_directory = $history_base_directory . date( 'Y/m', $time );
 $system = false;
 
 if ( $online && ! empty( $openai_key ) ) {
+	// curl_setopt( $ch, CURLOPT_URL, 'https://api.openai.com/v1/models' );
+	// curl_setopt(
+	// 	$ch,
+	// 	CURLOPT_HTTPHEADER,
+	// 	array(
+	// 		'Content-Type: application/json',
+	// 		'Authorization: Bearer ' . $openai_key,
+	// 	)
+	// );
+
+	// $response = curl_exec($ch);
+	// $data = json_decode($response, true);
+
+	// foreach ($data['data'] as $model) {
+	// 	if ( false !== strpos( $model['id'], 'gpt' ) ) {
+	//     $supported_models[ $model['id'] ]  = 'OpenAI';
+	// 	}
+	// }
+
 	$supported_models['gpt-3.5-turbo'] = 'OpenAI';
 	$supported_models['gpt-3.5-turbo-16k'] = 'OpenAI';
 	$supported_models['gpt-4'] = 'OpenAI';
-	$supported_models['gpt-4-32k'] = 'OpenAI';
+	$supported_models['gpt-4-1106-preview'] = 'OpenAI';
 }
 
 curl_setopt( $ch, CURLOPT_URL, 'http://localhost:11434/api/tags' );
@@ -129,7 +148,10 @@ $stdin = false;
 $fp_stdin = fopen( 'php://stdin', 'r' );
 $stat = fstat( $fp_stdin );
 if ( $stat['size'] > 0 ) {
-	$initial_input = trim( $initial_input . PHP_EOL . fread( $fp_stdin, $stat['size'] ) );
+	$initial_input .= PHP_EOL;
+	while ( $in = fread( $fp_stdin, $stat['size'] ) ) {
+		$initial_input .= $in;
+	}
 	$stdin = true;
 }
 fclose( $fp_stdin );
@@ -162,7 +184,7 @@ if ( isset( $options['m'] ) ) {
 		exit( 1 );
 	}
 }
-if ( isset( $options['v'] ) ) {
+if ( ! $stdin || isset( $options['v'] ) ) {
 	fprintf( STDERR, 'Model: ' . $model . ' via ' . $supported_models[$model] . PHP_EOL );
 }
 
@@ -221,6 +243,9 @@ if ( isset( $options['r'] ) ) {
 				if ( 'txt' === $used_model ) {
 					$used_model = '';
 				} else {
+					if ( ! isset( $options['m'] ) ) {
+						$model = str_replace( 'gpt-3-5-', 'gpt-3.5-', $used_model );
+					}
 					$used_model .= ', ';
 				}
 				$ago = '';
@@ -392,9 +417,12 @@ if ( 'OpenAI' === $supported_models[$model] ) {
 		CURLOPT_WRITEFUNCTION,
 		function ( $curl, $data ) use ( &$message, &$chunk_overflow ) {
 			if ( 200 !== curl_getinfo( $curl, CURLINFO_HTTP_CODE ) ) {
-				var_dump( curl_getinfo( $curl, CURLINFO_HTTP_CODE ) );
-				$error = json_decode( trim( $data ), true );
-				echo 'Error: ', $error['error']['message'], PHP_EOL;
+				$error = json_decode( trim( $chunk_overflow . $data ), true );
+				if ( $error ) {
+					echo 'Error: ', $error['error']['message'], PHP_EOL;
+				} else {
+					$chunk_overflow .= $data;
+				}
 				return strlen( $data );
 			}
 			$items = explode( 'data: ', $data );
@@ -578,8 +606,8 @@ while ( true ) {
 		'role'    => 'assistant',
 		'content' => $message,
 	);
-	if ( ltrim( $input ) === $input ) {
-		// Persist history unless prepended by whitespace.
+	if ( $stdin || ltrim( $input ) === $input ) {
+		// Persist history unless prepended by whitespace or coming from stdin.
 		fwrite( $fp, $message . PHP_EOL . PHP_EOL );
 	}
 	if ( $stdin ) {
