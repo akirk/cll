@@ -82,7 +82,7 @@ if ( isset( $ollama_models['models'] ) ) {
 
 if ( empty( $supported_models ) ) {
 	echo 'No supported models found.', PHP_EOL, PHP_EOL;
-	echo 'If you want to use ChatGTP, please set your OpenAI API key in the OPENAI_API_KEY environment variable:', PHP_EOL;
+	echo 'If you want to use ChatGPT, please set your OpenAI API key in the OPENAI_API_KEY environment variable:', PHP_EOL;
 	echo 'export OPENAI_API_KEY=sk-...', PHP_EOL, PHP_EOL;
 	echo 'If you want to use Ollama, please make sure it is accessible on localhost:11434', PHP_EOL;
 	exit( 1 );
@@ -245,6 +245,7 @@ if ( isset( $options['r'] ) ) {
 				} else {
 					if ( ! isset( $options['m'] ) ) {
 						$model = str_replace( 'gpt-3-5-', 'gpt-3.5-', $used_model );
+						// $model = str_replace( '-latest', ':latest', $used_model );
 					}
 					$used_model .= ', ';
 				}
@@ -401,6 +402,9 @@ readline_read_history( $readline_history_file );
 
 if ( 'OpenAI' === $supported_models[$model] ) {
 	curl_setopt( $ch, CURLOPT_URL, 'https://api.openai.com/v1/chat/completions' );
+} elseif ( 'Ollama (local)' === $supported_models[$model] ) {
+	curl_setopt( $ch, CURLOPT_URL, 'http://localhost:11434/v1/chat/completions' );
+}
 	$chunk_overflow = '';
 	curl_setopt(
 		$ch,
@@ -447,46 +451,6 @@ if ( 'OpenAI' === $supported_models[$model] ) {
 			return strlen( $data );
 		}
 	);
-} elseif ( 'Ollama (local)' === $supported_models[$model] ) {
-	curl_setopt( $ch, CURLOPT_URL, 'http://localhost:11434/api/generate' );
-
-	curl_setopt(
-		$ch,
-		CURLOPT_HTTPHEADER,
-		array(
-			'Content-Type: application/json',
-			'Transfer-Encoding: chunked',
-		)
-	);
-
-	curl_setopt(
-		$ch,
-		CURLOPT_WRITEFUNCTION,
-		function ( $curl, $data ) use ( &$message ) {
-			if ( 200 !== curl_getinfo( $curl, CURLINFO_HTTP_CODE ) ) {
-				var_dump( curl_getinfo( $curl, CURLINFO_HTTP_CODE ) );
-				$error = json_decode( trim( $data ), true );
-				var_dump( $error );
-				return strlen( $data );
-			}
-			$items = explode( PHP_EOL, $data );
-			foreach ( $items as $item ) {
-				$json = json_decode( trim( $item ), true );
-				if ( isset( $json['response'] ) ) {
-					if ( '' === $message ) {
-						echo ltrim( $json['response'] );
-					} else {
-						echo $json['response'];
-					}
-					$message .= $json['response'];
-				}
-			}
-
-			return strlen( $data );
-		}
-	);
-
-}
 
 // Start chatting.
 $multiline = false;
@@ -553,42 +517,18 @@ while ( true ) {
 		'content' => $input,
 	);
 
-	if ( 'OpenAI' === $supported_models[$model] ) {
-		curl_setopt(
-			$ch,
-			CURLOPT_POSTFIELDS,
-			json_encode(
-				array(
-					'model'        => $model,
-					'messages'     => $messages,
-					'stream'       => true,
-				)
+	curl_setopt(
+		$ch,
+		CURLOPT_POSTFIELDS,
+		json_encode(
+			array(
+				'model'        => $model,
+				'messages'     => $messages,
+				'stream'       => true,
 			)
-		);
-	} elseif ( 'Ollama (local)' === $supported_models[$model] ) {
-		$prompt = '';
-		foreach ( $messages as $message ) {
-			if ( $message['role'] === 'user' ) {
-				$prompt .= '### User:' . PHP_EOL;
-			} elseif ( $message['role'] === 'assistant' ) {
-				$prompt .= '### Response:' . PHP_EOL;
-			}
+		)
+	);
 
-			$prompt .= $message['content'] . PHP_EOL;
-		}
-
-		curl_setopt(
-			$ch,
-			CURLOPT_POSTFIELDS,
-			json_encode(
-				array(
-					'model'        => $model,
-					'prompt'       => $prompt,
-					'stream'       => true,
-				)
-			)
-		);
-	}
 	if ( ! $stdin || isset( $options['v'] ) ) {
 		echo PHP_EOL;
 	}
