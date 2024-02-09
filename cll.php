@@ -400,57 +400,54 @@ if ( isset( $options['r'] ) ) {
 readline_clear_history();
 readline_read_history( $readline_history_file );
 
+$headers = array(
+	'Content-Type: application/json',
+	'Transfer-Encoding: chunked',
+);
 if ( 'OpenAI' === $supported_models[$model] ) {
 	curl_setopt( $ch, CURLOPT_URL, 'https://api.openai.com/v1/chat/completions' );
+	$headers[] = 'Authorization: Bearer ' . $openai_key;
 } elseif ( 'Ollama (local)' === $supported_models[$model] ) {
 	curl_setopt( $ch, CURLOPT_URL, 'http://localhost:11434/v1/chat/completions' );
 }
-	$chunk_overflow = '';
-	curl_setopt(
-		$ch,
-		CURLOPT_HTTPHEADER,
-		array(
-			'Content-Type: application/json',
-			'Authorization: Bearer ' . $openai_key,
-			'Transfer-Encoding: chunked',
-		)
-	);
 
-	curl_setopt(
-		$ch,
-		CURLOPT_WRITEFUNCTION,
-		function ( $curl, $data ) use ( &$message, &$chunk_overflow ) {
-			if ( 200 !== curl_getinfo( $curl, CURLINFO_HTTP_CODE ) ) {
-				$error = json_decode( trim( $chunk_overflow . $data ), true );
-				if ( $error ) {
-					echo 'Error: ', $error['error']['message'], PHP_EOL;
-				} else {
-					$chunk_overflow .= $data;
-				}
-				return strlen( $data );
+$chunk_overflow = '';
+curl_setopt( $ch, CURLOPT_HTTPHEADER, $headers );
+curl_setopt(
+	$ch,
+	CURLOPT_WRITEFUNCTION,
+	function ( $curl, $data ) use ( &$message, &$chunk_overflow ) {
+		if ( 200 !== curl_getinfo( $curl, CURLINFO_HTTP_CODE ) ) {
+			$error = json_decode( trim( $chunk_overflow . $data ), true );
+			if ( $error ) {
+				echo 'Error: ', $error['error']['message'], PHP_EOL;
+			} else {
+				$chunk_overflow .= $data;
 			}
-			$items = explode( 'data: ', $data );
-			foreach ( $items as $item ) {
-				if ( ! $item ) {
-					continue;
-				}
-				$json = json_decode( trim( $chunk_overflow . $item ), true );
-				if ( $json ) {
-					$chunk_overflow = '';
-				} else {
-					$json = json_decode( trim( $item ), true );
-				}
-				if ( isset( $json['choices'][0]['delta']['content'] ) ) {
-					echo $json['choices'][0]['delta']['content'];
-					$message .= $json['choices'][0]['delta']['content'];
-				} else {
-					$chunk_overflow = $item;
-				}
-			}
-
 			return strlen( $data );
 		}
-	);
+		$items = explode( 'data: ', $data );
+		foreach ( $items as $item ) {
+			if ( ! $item ) {
+				continue;
+			}
+			$json = json_decode( trim( $chunk_overflow . $item ), true );
+			if ( $json ) {
+				$chunk_overflow = '';
+			} else {
+				$json = json_decode( trim( $item ), true );
+			}
+			if ( isset( $json['choices'][0]['delta']['content'] ) ) {
+				echo $json['choices'][0]['delta']['content'];
+				$message .= $json['choices'][0]['delta']['content'];
+			} else {
+				$chunk_overflow = $item;
+			}
+		}
+
+		return strlen( $data );
+	}
+);
 
 // Start chatting.
 $multiline = false;
