@@ -4,7 +4,7 @@ $openai_key = getenv( 'OPENAI_API_KEY', true );
 $supported_models = array();
 $ansi = function_exists( 'posix_isatty' ) && posix_isatty( STDOUT );
 
-$options = getopt( 'ds:lvhm:r::', array( 'help', 'version' ), $initial_input );
+$options = getopt( 'ds:li:vhm:r::', array( 'help', 'version' ), $initial_input );
 
 if ( ! isset( $options['m'] ) ) {
 	putenv('RES_OPTIONS=retrans:1 retry:1 timeout:1 attempts:1');
@@ -56,8 +56,7 @@ if ( $online && ! empty( $openai_key ) ) {
 
 	$supported_models['gpt-3.5-turbo'] = 'OpenAI';
 	$supported_models['gpt-3.5-turbo-16k'] = 'OpenAI';
-	$supported_models['gpt-4'] = 'OpenAI';
-	$supported_models['gpt-4-1106-preview'] = 'OpenAI';
+	$supported_models['gpt-4o'] = 'OpenAI';
 }
 
 curl_setopt( $ch, CURLOPT_URL, 'http://localhost:11434/api/tags' );
@@ -65,10 +64,10 @@ $ollama_models = json_decode( curl_exec( $ch ), true );
 if ( isset( $ollama_models['models'] ) ) {
 	usort( $ollama_models['models'], function( $a, $b ) {
 		// sort llama2 to the top.
-		if ( substr( $a['name'], 0, 6 ) === 'llama2' && substr( $b['name'], 0, 6 ) !== 'llama2' ) {
+		if ( substr( $a['name'], 0, 6 ) === 'llama3' && substr( $b['name'], 0, 6 ) !== 'llama3' ) {
 			return -1;
 		}
-		if ( substr( $b['name'], 0, 6 ) === 'llama2' && substr( $a['name'], 0, 6 ) !== 'llama2' ) {
+		if ( substr( $b['name'], 0, 6 ) === 'llama3' && substr( $a['name'], 0, 6 ) !== 'llama3' ) {
 			return 1;
 		}
 
@@ -108,6 +107,7 @@ Options:
   -d                 Ignore the model's answer.
   -v                 Be verbose.
   -m [model]         Use a specific model. Default: $model
+  -i [image_file]    Add an image as input (only gpt-4o).
   -s [system_prompt] Specify a system prompt preceeding the conversation.
 
 Arguments:
@@ -509,6 +509,41 @@ while ( true ) {
 			fwrite( $fp, '>>> ' . $input . PHP_EOL . '.' . PHP_EOL . PHP_EOL );
 		}
 	}
+
+	$image = false;
+	if ( isset( $options['i'] ) ) {
+		if ( $model === 'gpt-4o' ) {
+			$image = trim( $options['i'] );
+			if ( ! filter_var( $image, FILTER_VALIDATE_URL ) ) {
+				if ( ! file_exists( $image ) ) {
+					echo 'Image file not found: ', $image, PHP_EOL;
+					exit(1);
+				} else {
+					$mime = mime_content_type( $image );
+					$image = 'data:' . $mime . ';base64,' . base64_encode( file_get_contents( $image ) );
+				}
+			}
+		} else {
+			echo 'Image input is only supported with gpt-4o.', PHP_EOL;
+			exit(1);
+		}
+	}
+
+	if ( $image ) {
+		$input = array(
+			array(
+				'type' => 'text',
+				'text' => $input,
+			),
+			array(
+				'type' => 'image_url',
+				'image_url' => array(
+					'url' => $image,
+				),
+			),
+		);
+	}
+
 	$messages[] = array(
 		'role'    => 'user',
 		'content' => $input,
@@ -543,6 +578,9 @@ while ( true ) {
 		'role'    => 'assistant',
 		'content' => $message,
 	);
+	if ( ! is_string( $input ) ) {
+		$input = $input[0]['text'];
+	}
 	if ( $stdin || ltrim( $input ) === $input ) {
 		// Persist history unless prepended by whitespace or coming from stdin.
 		fwrite( $fp, $message . PHP_EOL . PHP_EOL );
@@ -551,4 +589,6 @@ while ( true ) {
 		break;
 	}
 }
-fclose( $fp );
+if ( $fp ) {
+	fclose( $fp );
+}
