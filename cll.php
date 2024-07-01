@@ -62,18 +62,6 @@ if ( $online && ! empty( $openai_key ) ) {
 curl_setopt( $ch, CURLOPT_URL, 'http://localhost:11434/api/tags' );
 $ollama_models = json_decode( curl_exec( $ch ), true );
 if ( isset( $ollama_models['models'] ) ) {
-	usort( $ollama_models['models'], function( $a, $b ) {
-		// sort llama2 to the top.
-		if ( substr( $a['name'], 0, 6 ) === 'llama3' && substr( $b['name'], 0, 6 ) !== 'llama3' ) {
-			return -1;
-		}
-		if ( substr( $b['name'], 0, 6 ) === 'llama3' && substr( $a['name'], 0, 6 ) !== 'llama3' ) {
-			return 1;
-		}
-
-		return $b['modified_at'] <=> $a['modified_at'];
-	} );
-
 	foreach ( $ollama_models['models'] as $m ) {
 		$supported_models[ $m['name'] ] = 'Ollama (local)';
 	}
@@ -86,6 +74,29 @@ if ( empty( $supported_models ) ) {
 	echo 'If you want to use Ollama, please make sure it is accessible on localhost:11434', PHP_EOL;
 	exit( 1 );
 }
+
+$model_weight = array_flip( array_reverse( array( 'gpt-4o', 'gemma', 'llama3', 'llama2' ) ) );
+uksort( $supported_models, function( $a, $b ) use ( $model_weight ) {
+	$a_weight = $b_weight = -1;
+	foreach ( $model_weight as $model => $weight ) {
+		if ( 0 === strpos( $a, $model ) ) {
+			$a_weight = $weight;
+		} elseif ( 0 === strpos( $b, $model ) ) {
+			$b_weight = $weight;
+		}
+	}
+
+	if ( $a_weight > $b_weight ) {
+		return -1;
+	}
+
+	if ( $a_weight < $b_weight ) {
+		return 1;
+	}
+
+	return 0;
+} );
+
 $model = key( $supported_models );
 
 $supported_models_list = implode( ', ', array_keys( $supported_models ) );
@@ -163,7 +174,7 @@ if ( isset( $options['m'] ) ) {
 	if ( isset( $supported_models[$options['m']] ) ) {
 		$model = $options['m'];
 	}
-	if ( ! $model ) {
+	if ( ! $model && $options['m'] ) {
 		foreach ( array_keys( $supported_models ) as $m ) {
 			if ( false !== strpos( $m, $options['m'] ) ) {
 				$model = $m;
@@ -180,7 +191,7 @@ if ( isset( $options['m'] ) ) {
 		}
 	}
 	if ( ! $model ) {
-		fprintf( STDERR, 'Unsupported model. Valid values: ' . $supported_models_list . PHP_EOL );
+		fprintf( STDERR, 'Supported Models: ' . $supported_models_list . PHP_EOL );
 		exit( 1 );
 	}
 }
@@ -245,7 +256,7 @@ if ( isset( $options['r'] ) ) {
 				} else {
 					if ( ! isset( $options['m'] ) ) {
 						$model = str_replace( 'gpt-3-5-', 'gpt-3.5-', $used_model );
-						// $model = str_replace( '-latest', ':latest', $used_model );
+						$model = str_replace( '-latest', ':latest', $used_model );
 					}
 					$used_model .= ', ';
 				}
@@ -355,6 +366,7 @@ if ( isset( $options['r'] ) ) {
 				'content' => $system,
 			) );
 		}
+		$state = array();
 		foreach ( $history_files[ $last_conversations[ $sel ] ] as $k => $message ) {
 			if ( isset( $options['d'] ) && $k % 2 ) {
 				// Ignore assistant answers.
@@ -369,7 +381,21 @@ if ( isset( $options['r'] ) ) {
 			if ( 0 === $k % 2 ) {
 				echo '> ';
 			}
-			echo $message, PHP_EOL;
+			$chunks = preg_split( '/(\*\*)/', $message, 0, PREG_SPLIT_DELIM_CAPTURE );
+			while ( $chunks ) {
+				$chunk = array_shift( $chunks );
+				if ( '**' === $chunk ) {
+					$state['bold'] = ! isset( $state['bold'] ) || ! $state['bold'];
+					if ( $state['bold'] ) {
+						echo "\033[1m";
+					} else {
+						echo "\033[0m";
+					}
+					continue;
+				}
+				echo $chunk;
+			}
+			echo PHP_EOL;
 		}
 		if ( isset( $options['d'] ) ) {
 			$initial_input = ' ';
@@ -410,13 +436,13 @@ if ( 'OpenAI' === $supported_models[$model] ) {
 } elseif ( 'Ollama (local)' === $supported_models[$model] ) {
 	curl_setopt( $ch, CURLOPT_URL, 'http://localhost:11434/v1/chat/completions' );
 }
-
+$state = array( 'bold' => false );
 $chunk_overflow = '';
 curl_setopt( $ch, CURLOPT_HTTPHEADER, $headers );
 curl_setopt(
 	$ch,
 	CURLOPT_WRITEFUNCTION,
-	function ( $curl, $data ) use ( &$message, &$chunk_overflow ) {
+	function ( $curl, $data ) use ( &$message, &$chunk_overflow, &$state ) {
 		if ( 200 !== curl_getinfo( $curl, CURLINFO_HTTP_CODE ) ) {
 			$error = json_decode( trim( $chunk_overflow . $data ), true );
 			if ( $error ) {
@@ -438,7 +464,20 @@ curl_setopt(
 				$json = json_decode( trim( $item ), true );
 			}
 			if ( isset( $json['choices'][0]['delta']['content'] ) ) {
-				echo $json['choices'][0]['delta']['content'];
+				$chunks = preg_split( '/(\*\*)/', $json['choices'][0]['delta']['content'], 0, PREG_SPLIT_DELIM_CAPTURE );
+				while ( $chunks ) {
+					$chunk = array_shift( $chunks );
+					if ( '**' === $chunk ) {
+						$state['bold'] = ! isset( $state['bold'] ) || ! $state['bold'];
+						if ( $state['bold'] ) {
+							echo "\033[1m";
+						} else {
+							echo "\033[0m";
+						}
+						continue;
+					}
+					echo $chunk;
+				}
 				$message .= $json['choices'][0]['delta']['content'];
 			} else {
 				$chunk_overflow = $item;
