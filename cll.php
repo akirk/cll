@@ -4,7 +4,7 @@ $openai_key = getenv( 'OPENAI_API_KEY', true );
 $supported_models = array();
 $ansi = function_exists( 'posix_isatty' ) && posix_isatty( STDOUT );
 
-$options = getopt( 'ds:li:vhm:r::', array( 'help', 'version' ), $initial_input );
+$options = getopt( 'ds:li:vhm:r:', array( 'help', 'version' ), $initial_input );
 
 if ( ! isset( $options['m'] ) ) {
 	putenv('RES_OPTIONS=retrans:1 retry:1 timeout:1 attempts:1');
@@ -115,7 +115,7 @@ Usage: $self [-l] [-r [number]] [-m model] [-s system_prompt] [conversation_inpu
 
 Options:
   -l                 Resume last conversation.
-  -r [number]        Resume a previous conversation and list 'number' conversations (default: 10).
+  -r [number|search] Resume a previous conversation and list 'number' conversations or search them.
   -d                 Ignore the model's answer.
   -v                 Be verbose.
   -m [model]         Use a specific model. Default: $model
@@ -138,6 +138,9 @@ Example usage:
 
   $self -r 5
     Resume a conversation and list the last 5 to choose from.
+
+  $self -r hello
+    Resume a conversation and list the last 10 containing "hello" to choose from.
 
   $self -s "Only respond in emojis"
     Have an interesting conversation 🙂
@@ -210,13 +213,26 @@ $sel = false;
 $last_conversations = array();
 
 if ( isset( $options['r'] ) ) {
+	$search = false;
+	if ( ! is_numeric( $options['r'] ) ) {
+		$search = $options['r'];
+		$options['r'] = 10;
+	}
+
 	$options['r'] = intval( $options['r'] );
 	if ( $options['r'] <= 0 ) {
 		$options['r'] = 10;
 	}
 	$history_files = array();
 	for ( $i = 0; $i > -300; $i -= 20 ) {
-		$history_files = array_merge( $history_files, array_flip( glob( $history_base_directory . date( 'Y/m', $time - $i ) . '/history.*' ) ) );
+		$more_history_files = array_flip( glob( $history_base_directory . date( 'Y/m', $time - $i ) . '/history.*' ) );
+		if ( $search ) {
+			$more_history_files = array_filter( $more_history_files, function( $file ) use ( $search ) {
+				$file_contents = file_get_contents( $file );
+				return false !== stripos( $file_contents, $search );
+			}, ARRAY_FILTER_USE_KEY );
+		}
+		$history_files = array_merge( $history_files, $more_history_files );
 		if ( count( $history_files ) >= $options['r'] ) {
 			break;
 		}
@@ -304,7 +320,7 @@ if ( isset( $options['r'] ) ) {
 					if ( $ansi ) {
 						echo "\033[1m";
 					}
-					echo ltrim( substr( $history_files[ $last_history_file ][0], 0, 100 ), '> ' );
+					echo ltrim( str_replace( PHP_EOL, ' ', substr( $history_files[ $last_history_file ][0], 0, 100 ) ), '> ' );
 					if ( $ansi ) {
 						echo "\033[0m";
 						echo PHP_EOL;
