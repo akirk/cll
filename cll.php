@@ -367,7 +367,9 @@ if ( isset( $options['r'] ) ) {
 				'content' => $system,
 			) );
 		}
-		$state = array();
+		$state = array(
+			'bold' => false,
+		);
 		foreach ( $history_files[ $last_conversations[ $sel ] ] as $k => $message ) {
 			if ( isset( $options['d'] ) && $k % 2 ) {
 				// Ignore assistant answers.
@@ -383,9 +385,11 @@ if ( isset( $options['r'] ) ) {
 				echo '> ';
 			}
 			$chunks = preg_split( '/(\*\*)/', $message, 0, PREG_SPLIT_DELIM_CAPTURE );
+			$chunk = '';
 			while ( $chunks ) {
+				$previous_chunk = $chunk;
 				$chunk = array_shift( $chunks );
-				if ( '**' === $chunk ) {
+				if ( '**' === $chunk && '/' !== substr( $previous_chunk, -1 ) ) {
 					$state['bold'] = ! isset( $state['bold'] ) || ! $state['bold'];
 					if ( $state['bold'] ) {
 						echo "\033[1m";
@@ -394,6 +398,13 @@ if ( isset( $options['r'] ) ) {
 					}
 					continue;
 				}
+
+				// A new line ends the bold state as a fallback.
+				if ( false !== strpos( $chunk, "\n" ) && $state['bold'] ) {
+					echo "\033[0m";
+					$state['bold'] = false;
+				}
+
 				echo $chunk;
 			}
 			echo PHP_EOL;
@@ -466,9 +477,11 @@ curl_setopt(
 			}
 			if ( isset( $json['choices'][0]['delta']['content'] ) ) {
 				$chunks = preg_split( '/(\*\*)/', $json['choices'][0]['delta']['content'], 0, PREG_SPLIT_DELIM_CAPTURE );
+				$chunk = '';
 				while ( $chunks ) {
+					$previous_chunk = $chunk;
 					$chunk = array_shift( $chunks );
-					if ( '**' === $chunk ) {
+					if ( '**' === $chunk && '/' !== substr( $previous_chunk, -1 ) ) {
 						$state['bold'] = ! isset( $state['bold'] ) || ! $state['bold'];
 						if ( $state['bold'] ) {
 							echo "\033[1m";
@@ -477,6 +490,13 @@ curl_setopt(
 						}
 						continue;
 					}
+
+					// A new line ends the bold state as a fallback.
+					if ( false !== strpos( $chunk, "\n" ) && $state['bold'] ) {
+						echo "\033[0m";
+						$state['bold'] = false;
+					}
+
 					echo $chunk;
 				}
 				$message .= $json['choices'][0]['delta']['content'];
