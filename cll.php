@@ -56,6 +56,7 @@ if ( $online && ! empty( $openai_key ) ) {
 
 	$supported_models['gpt-3.5-turbo'] = 'OpenAI';
 	$supported_models['gpt-3.5-turbo-16k'] = 'OpenAI';
+	$supported_models['gpt-4o-mini'] = 'OpenAI';
 	$supported_models['gpt-4o'] = 'OpenAI';
 }
 
@@ -75,7 +76,7 @@ if ( empty( $supported_models ) ) {
 	exit( 1 );
 }
 
-$model_weight = array_flip( array_reverse( array( 'gpt-4o', 'gemma', 'llama3', 'llama2' ) ) );
+$model_weight = array_flip( array_reverse( array( 'gpt-4o-mini', 'gemma', 'llama3', 'llama2' ) ) );
 uksort( $supported_models, function( $a, $b ) use ( $model_weight ) {
 	$a_weight = $b_weight = -1;
 	foreach ( $model_weight as $model => $weight ) {
