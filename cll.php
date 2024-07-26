@@ -519,6 +519,12 @@ while ( true ) {
 		continue;
 	}
 
+	if ( ':' === substr( trim( $input ), -1 ) ) {
+		$multiline = $input . PHP_EOL;
+		echo 'Continuing multiline input. End with the last message as just a dot.', PHP_EOL;
+		continue;
+	}
+
 	readline_add_history( $input );
 	if ( ! $fp ) {
 		if ( ! file_exists( $history_directory ) ) {
