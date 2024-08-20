@@ -624,7 +624,7 @@ while ( true ) {
 
 	$image = false;
 	if ( isset( $options['i'] ) ) {
-		if ( $model === 'gpt-4o' ) {
+		if ( preg_match( '/^(gpt-4o|llava)/', $model ) ) {
 			$image = trim( $options['i'] );
 			if ( ! filter_var( $image, FILTER_VALIDATE_URL ) ) {
 				if ( ! file_exists( $image ) ) {
@@ -636,7 +636,7 @@ while ( true ) {
 				}
 			}
 		} else {
-			echo 'Image input is only supported with gpt-4o.', PHP_EOL;
+			echo 'Image input is only supported with gpt-4o* or llava.', PHP_EOL;
 			exit(1);
 		}
 	}
