@@ -3,9 +3,8 @@ $version = '1.1.2';
 $openai_key = getenv( 'OPENAI_API_KEY', true );
 $supported_models = array();
 $ansi = function_exists( 'posix_isatty' ) && posix_isatty( STDOUT );
-$allow_file_writes = true;
 
-$options = getopt( 'ds:li:vhm:r:', array( 'help', 'version' ), $initial_input );
+$options = getopt( 'ds:li:vhfm:r:', array( 'help', 'version' ), $initial_input );
 
 if ( ! isset( $options['m'] ) ) {
 	putenv('RES_OPTIONS=retrans:1 retry:1 timeout:1 attempts:1');
@@ -165,13 +164,14 @@ if ( isset( $options['h'] ) || isset( $options['help'] ) ) {
 	$offline = ! $online ? "(we're offline)" : '';
 	$self = basename( $_SERVER['argv'][0] );
 	echo <<<USAGE
-Usage: $self [-l] [-r [number]] [-m model] [-s system_prompt] [conversation_input]
+Usage: $self [-l] [-f] [-r [number|searchterm]] [-m model] [-s system_prompt] [-i image_file] [conversation_input]
 
 Options:
   -l                 Resume last conversation.
   -r [number|search] Resume a previous conversation and list 'number' conversations or search them.
   -d                 Ignore the model's answer.
   -v                 Be verbose.
+  -f                 Allow file system writes for suggested file content.
   -m [model]         Use a specific model. Default: $model
   -i [image_file]    Add an image as input (only gpt-4o).
   -s [system_prompt] Specify a system prompt preceeding the conversation.
@@ -460,14 +460,25 @@ if ( isset( $options['r'] ) ) {
 		}
 
 	}
-} elseif ( isset( $options['s'] ) && $options['s'] ) {
-	$system = $options['s'];
-	array_unshift( $messages, array(
-		'role'    => 'system',
-		'content' => $system,
-	) );
-	if ( ! $stdin || isset( $options['v'] ) ) {
-		echo 'System prompt: ', $system, PHP_EOL;
+} elseif ( ! empty( $options['s'] ) || isset( $options['f'] ) ) {
+	$system = '';
+	if ( isset( $options['f'] ) ) {
+		$system = 'When recommending file content it must be prepended with the proposed filename in the form: "File: filename.ext"';
+	}
+	if ( ! empty( $options['s'] ) ) {
+		if ( $system ) {
+			$system .= ' ';
+		}
+		$system .= $options['s'];
+	}
+	if ( $system ) {
+		array_unshift( $messages, array(
+			'role'    => 'system',
+			'content' => $system,
+		) );
+		if ( ! $stdin || isset( $options['v'] ) ) {
+			echo 'System prompt: ', $system, PHP_EOL;
+		}
 	}
 	if ( trim( $initial_input ) ) {
 		if ( ! $stdin || isset( $options['v'] ) ) {
@@ -478,14 +489,6 @@ if ( isset( $options['r'] ) ) {
 	if ( ! $stdin || isset( $options['v'] ) ) {
 		echo '> ', $initial_input, PHP_EOL;
 	}
-}
-
-if ( $allow_file_writes && ! $system ) {
-	$system = 'When recommending file content it must be prepended with the proposed filename in the form: "File: filename.ext"';
-	array_unshift( $messages, array(
-		'role'    => 'system',
-		'content' => $system,
-	) );
 }
 
 readline_clear_history();
@@ -595,6 +598,16 @@ while ( true ) {
 
 		$fp = fopen( $full_history_file, 'a' );
 	}
+	if ( ! $system && preg_match( '/\b(php|wordpress|python|code)\b/i', $input ) ) {
+		$system = 'When responding with code sections in a backtick separated code block, please prepend it with the proposed filename in the form: "File: filename.ext"';
+		echo "Because code was requested, we're adding this System Prompt: $system", PHP_EOL;
+
+		array_unshift( $messages, array(
+			'role'    => 'system',
+			'content' => $system,
+		) );
+	}
+
 	if ( ltrim( $input ) === $input ) {
 		// Persist history unless prepended by whitespace.
 		readline_write_history( $readline_history_file );
@@ -679,6 +692,29 @@ while ( true ) {
 	);
 	if ( ! is_string( $input ) ) {
 		$input = $input[0]['text'];
+	}
+	if ( isset( $options['f'] ) ) {
+		preg_match_all( '/^(?:#+\s*)?File: `?([a-z0-9_.-]+)`?$/m', $message, $matches, PREG_SET_ORDER );
+		if ( $matches ) {
+			foreach ( $matches as $match ) {
+				$file = $match[1];
+				preg_match( '/^' . preg_quote( $match[0], '/' ) . '.*?```[a-z0-9_-]*\n(.*?)```/sm', $message, $m );
+				if ( $m ) {
+					if ( file_exists( $file ) ) {
+						$backup_filename = $file . '.bak.' . time();
+						echo "\033[33m";
+						echo 'Backing up existing file: ', $file, ' => ', $backup_filename, PHP_EOL;
+						echo "\033[0m";
+
+						copy( $file, $backup_filename );
+					}
+					echo "\033[32m";
+					echo 'Writing ', strlen( $m[1] ), ' bytes to file: ', $file, PHP_EOL;
+					echo "\033[0m";
+					file_put_contents( $file, $m[1] );
+				}
+			}
+		}
 	}
 	if ( $stdin || ltrim( $input ) === $input ) {
 		// Persist history unless prepended by whitespace or coming from stdin.
