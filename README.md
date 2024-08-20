@@ -27,34 +27,45 @@ I recommend using an alias in your shell to have it available anywhere in your c
 ### Parameters
 
 ```
-Usage: cll [-l] [-r [number]] [-s system_prompt] [-m model] [conversation input]
+Usage: cll [-l] [-f] [-r [number|searchterm]] [-m model] [-s system_prompt] [-i image_file] [conversation_input]
 
 Options:
   -l                 Resume last conversation.
-  -r [number]        Resume a previous conversation and list 'number' conversations (default: 10).
+  -r [number|search] Resume a previous conversation and list 'number' conversations or search them.
+  -d                 Ignore the model's answer.
+  -v                 Be verbose.
+  -f                 Allow file system writes for suggested file content.
+  -m [model]         Use a specific model. Default: gpt-4o-mini
+  -i [image_file]    Add an image as input (only gpt-4o).
   -s [system_prompt] Specify a system prompt preceeding the conversation.
 
 Arguments:
-  conversation input  Input for the first conversation.
+  conversation_input  Input for the first conversation.
 
 Notes:
-  - To start the input of multiline messages, send an empty message.
+  - To input multiline messages, send an empty message.
   - To end the conversation, enter "bye".
 
 Example usage:
-  cll -l
+  cll.php -l
     Resumes the last conversation.
 
-  cll -r 5
+  cll.php -ld -m llama2
+    Reasks the previous question.
+
+  cll.php -r 5
     Resume a conversation and list the last 5 to choose from.
 
-  cll -s "Only respond in emojis"
+  cll.php -r hello
+    Resume a conversation and list the last 10 containing "hello" to choose from.
+
+  cll.php -s "Only respond in emojis"
     Have an interesting conversation 🙂
 
-  cll Tell me a joke
+  cll.php Tell me a joke
     Starts a new conversation with the given message.
 
-  cll -m gpt-3.5-turbo-16k
+  cll.php -m gpt-3.5-turbo-16k
     Use a ChatGPT model with 16k tokens instead of 4k.
-    Supported modes: gpt-3.5-turbo, gpt-3.5-turbo-16k, gpt-4, gpt-4-32k, codellama:latest, llama2:latest
+Supported modes: gpt-4o-mini, gemma2:latest, llama3:latest, llama2:latest, gpt-3.5-turbo, gpt-3.5-turbo-16k, gpt-4o, qwen:0.5b, mistral:latest
 ```

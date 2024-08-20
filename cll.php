@@ -164,7 +164,7 @@ if ( isset( $options['h'] ) || isset( $options['help'] ) ) {
 	$offline = ! $online ? "(we're offline)" : '';
 	$self = basename( $_SERVER['argv'][0] );
 	echo <<<USAGE
-Usage: $self [-l] [-r [number]] [-m model] [-s system_prompt] [conversation_input]
+Usage: $self [-l] [-f] [-r [number|searchterm]] [-m model] [-s system_prompt] [-i image_file] [conversation_input]
 
 Options:
   -l                 Resume last conversation.
