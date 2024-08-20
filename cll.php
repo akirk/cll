@@ -3,6 +3,7 @@ $version = '1.1.2';
 $openai_key = getenv( 'OPENAI_API_KEY', true );
 $supported_models = array();
 $ansi = function_exists( 'posix_isatty' ) && posix_isatty( STDOUT );
+$allow_file_writes = true;
 
 $options = getopt( 'ds:li:vhm:r:', array( 'help', 'version' ), $initial_input );
 
@@ -17,9 +18,62 @@ $ch = curl_init();
 curl_setopt( $ch, CURLOPT_RETURNTRANSFER, 1 );
 curl_setopt( $ch, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1 );
 
-function dontAutoComplete ($input, $index) { return []; }
+function dont_auto_complete ($input, $index) { return []; }
+function output_message( $message, $previous_chunk = '' ) {
+	static $state = array(
+		'bold' => false,
+		'headline' => false,
+		'trimnext' => false,
+	);
+	$chunks = array_filter( preg_split( '/(\*\*|#+|\n)/', $message, 0, PREG_SPLIT_DELIM_CAPTURE ) );
+	$chunk = '';
+	while ( $chunks ) {
+		$chunk = array_shift( $chunks );
+		if ( '**' === $chunk && '/' !== substr( $previous_chunk, -1 ) ) {
+			$state['bold'] = ! isset( $state['bold'] ) || ! $state['bold'];
+			if ( $state['bold'] ) {
+				echo "\033[1m";
+			} else {
+				echo "\033[0m";
+			}
+			$previous_chunk = $chunk;
+			continue;
+		}
 
-readline_completion_function("dontAutoComplete");
+		if ( ! $state['headline'] && 0 === strpos( $chunk, '#' ) && PHP_EOL === $previous_chunk ) {
+			if ( '#' === $chunk ) {
+				$state['bold'] = true;
+				echo "\033[1m";
+			}
+			echo "\033[4m";
+			$state['headline'] = true;
+			$state['trimnext'] = true;
+			$previous_chunk = $chunk;
+			continue;
+		}
+
+		// A new line ends the bold state as a fallback.
+		if ( 0 === strpos( $previous_chunk, PHP_EOL ) && ( $state['bold'] || $state['headline'] ) ) {
+			echo "\033[0m";
+			$state['bold'] = false;
+			$state['headline'] = false;
+			$state['trimnext'] = false;
+		}
+
+		if ( $state['trimnext'] ) {
+			$chunk = ltrim( $chunk );
+			if ( $chunk ) {
+				$state['trimnext'] = false;
+			}
+		}
+		echo $chunk;
+		$previous_chunk = $chunk;
+	}
+
+	return $chunk;
+}
+
+readline_completion_function("dont_auto_complete");
 
 $readline_history_file = __DIR__ . '/.history';
 $history_base_directory = __DIR__ . '/chats/';
@@ -383,9 +437,6 @@ if ( isset( $options['r'] ) ) {
 				'content' => $system,
 			) );
 		}
-		$state = array(
-			'bold' => false,
-		);
 		foreach ( $history_files[ $last_conversations[ $sel ] ] as $k => $message ) {
 			if ( isset( $options['d'] ) && $k % 2 ) {
 				// Ignore assistant answers.
@@ -400,29 +451,7 @@ if ( isset( $options['r'] ) ) {
 			if ( 0 === $k % 2 ) {
 				echo '> ';
 			}
-			$chunks = preg_split( '/(\*\*)/', $message, 0, PREG_SPLIT_DELIM_CAPTURE );
-			$chunk = '';
-			while ( $chunks ) {
-				$previous_chunk = $chunk;
-				$chunk = array_shift( $chunks );
-				if ( '**' === $chunk && '/' !== substr( $previous_chunk, -1 ) ) {
-					$state['bold'] = ! isset( $state['bold'] ) || ! $state['bold'];
-					if ( $state['bold'] ) {
-						echo "\033[1m";
-					} else {
-						echo "\033[0m";
-					}
-					continue;
-				}
-
-				// A new line ends the bold state as a fallback.
-				if ( false !== strpos( $chunk, "\n" ) && $state['bold'] ) {
-					echo "\033[0m";
-					$state['bold'] = false;
-				}
-
-				echo $chunk;
-			}
+			output_message( $message );
 			echo PHP_EOL;
 		}
 		if ( isset( $options['d'] ) ) {
@@ -451,6 +480,14 @@ if ( isset( $options['r'] ) ) {
 	}
 }
 
+if ( $allow_file_writes && ! $system ) {
+	$system = 'When recommending file content it must be prepended with the proposed filename in the form: "File: filename.ext"';
+	array_unshift( $messages, array(
+		'role'    => 'system',
+		'content' => $system,
+	) );
+}
+
 readline_clear_history();
 readline_read_history( $readline_history_file );
 
@@ -464,13 +501,14 @@ if ( 'OpenAI' === $supported_models[$model] ) {
 } elseif ( 'Ollama (local)' === $supported_models[$model] ) {
 	curl_setopt( $ch, CURLOPT_URL, 'http://localhost:11434/v1/chat/completions' );
 }
-$state = array( 'bold' => false );
+
 $chunk_overflow = '';
 curl_setopt( $ch, CURLOPT_HTTPHEADER, $headers );
 curl_setopt(
 	$ch,
 	CURLOPT_WRITEFUNCTION,
 	function ( $curl, $data ) use ( &$message, &$chunk_overflow, &$state ) {
+		static $previous_chunk = '';
 		if ( 200 !== curl_getinfo( $curl, CURLINFO_HTTP_CODE ) ) {
 			$error = json_decode( trim( $chunk_overflow . $data ), true );
 			if ( $error ) {
@@ -492,29 +530,8 @@ curl_setopt(
 				$json = json_decode( trim( $item ), true );
 			}
 			if ( isset( $json['choices'][0]['delta']['content'] ) ) {
-				$chunks = preg_split( '/(\*\*)/', $json['choices'][0]['delta']['content'], 0, PREG_SPLIT_DELIM_CAPTURE );
-				$chunk = '';
-				while ( $chunks ) {
-					$previous_chunk = $chunk;
-					$chunk = array_shift( $chunks );
-					if ( '**' === $chunk && '/' !== substr( $previous_chunk, -1 ) ) {
-						$state['bold'] = ! isset( $state['bold'] ) || ! $state['bold'];
-						if ( $state['bold'] ) {
-							echo "\033[1m";
-						} else {
-							echo "\033[0m";
-						}
-						continue;
-					}
+				$previous_chunk = output_message( $json['choices'][0]['delta']['content'], $previous_chunk );
 
-					// A new line ends the bold state as a fallback.
-					if ( false !== strpos( $chunk, "\n" ) && $state['bold'] ) {
-						echo "\033[0m";
-						$state['bold'] = false;
-					}
-
-					echo $chunk;
-				}
 				$message .= $json['choices'][0]['delta']['content'];
 			} else {
 				$chunk_overflow = $item;
