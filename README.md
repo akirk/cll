@@ -47,25 +47,25 @@ Notes:
   - To end the conversation, enter "bye".
 
 Example usage:
-  cll.php -l
+  cll -l
     Resumes the last conversation.
 
-  cll.php -ld -m llama2
+  cll -ld -m llama2
     Reasks the previous question.
 
-  cll.php -r 5
+  cll -r 5
     Resume a conversation and list the last 5 to choose from.
 
-  cll.php -r hello
+  cll -r hello
     Resume a conversation and list the last 10 containing "hello" to choose from.
 
-  cll.php -s "Only respond in emojis"
+  cll -s "Only respond in emojis"
     Have an interesting conversation 🙂
 
-  cll.php Tell me a joke
+  cll Tell me a joke
     Starts a new conversation with the given message.
 
-  cll.php -m gpt-3.5-turbo-16k
+  cll -m gpt-3.5-turbo-16k
     Use a ChatGPT model with 16k tokens instead of 4k.
 Supported modes: gpt-4o-mini, gemma2:latest, llama3:latest, llama2:latest, gpt-3.5-turbo, gpt-3.5-turbo-16k, gpt-4o, qwen:0.5b, mistral:latest
 ```
