@@ -595,6 +595,16 @@ while ( true ) {
 
 		$fp = fopen( $full_history_file, 'a' );
 	}
+	if ( ! $system && preg_match( '/\b(php|wordpress|python|code)\b/i', $input ) ) {
+		$system = 'When responding with code sections in a backtick separated code block, please prepend it with the proposed filename in the form: "File: filename.ext"';
+		echo "Because code was requested, we're adding this System Prompt: $system", PHP_EOL;
+
+		array_unshift( $messages, array(
+			'role'    => 'system',
+			'content' => $system,
+		) );
+	}
+
 	if ( ltrim( $input ) === $input ) {
 		// Persist history unless prepended by whitespace.
 		readline_write_history( $readline_history_file );
@@ -679,6 +689,22 @@ while ( true ) {
 	);
 	if ( ! is_string( $input ) ) {
 		$input = $input[0]['text'];
+	}
+	preg_match_all( '/^(?:#+\s*)?File: `?([a-z0-9_.-]+)`?$/m', $message, $matches, PREG_SET_ORDER );
+	if ( $matches ) {
+		foreach ( $matches as $match ) {
+			$file = $match[1];
+			preg_match( '/^' . preg_quote( $match[0], '/' ) . '.*?```[a-z0-9_-]*\n(.*?)```/sm', $message, $m );
+			if ( $m ) {
+				if ( file_exists( $file ) ) {
+					$backup_filename = $file . '.bak.' . time();
+					echo 'Backing up existing file: ', $file, ' => ', $backup_filename, PHP_EOL;
+					copy( $file, $backup_filename );
+				}
+				echo 'Writing ', strlen( $m[1] ), ' bytes to file: ', $file, PHP_EOL;
+				file_put_contents( $file, $m[1] );
+			}
+		}
 	}
 	if ( $stdin || ltrim( $input ) === $input ) {
 		// Persist history unless prepended by whitespace or coming from stdin.
