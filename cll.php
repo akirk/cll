@@ -18,58 +18,147 @@ curl_setopt( $ch, CURLOPT_RETURNTRANSFER, 1 );
 curl_setopt( $ch, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1 );
 
 function dont_auto_complete ($input, $index) { return []; }
-function output_message( $message, $previous_chunk = '' ) {
+function output_message( $message ) {
+	static $old_message = '';
+	if ( $message === '') {
+		$old_message = '';
+	}
+	static $chunks = array();
+	if ( $message === '---OUTPUTOKENS' ) {
+		//lightgray
+		echo "\033[37m", PHP_EOL, json_encode( $chunks ), PHP_EOL, "\033[m";
+		$chunks = array();
+		return;
+	} else {
+		$chunks[] = $message;
+	}
 	static $state = array(
+		'maybe_bold' => false,
 		'bold' => false,
 		'headline' => false,
 		'trimnext' => false,
+		'inline_code' => false,
+		'in_code_block' => false,
+		'code_block_start' => false,
+		'maybe_code_block_end' => false,
 	);
-	$chunks = array_filter( preg_split( '/(\*\*|#+|\n)/', $message, 0, PREG_SPLIT_DELIM_CAPTURE ) );
-	$chunk = '';
-	while ( $chunks ) {
-		$chunk = array_shift( $chunks );
-		if ( '**' === $chunk && '/' !== substr( $previous_chunk, -1 ) ) {
-			$state['bold'] = ! isset( $state['bold'] ) || ! $state['bold'];
-			if ( $state['bold'] ) {
-				echo "\033[1m";
+
+	$message = $old_message . $message;
+	$i = strlen( $old_message );
+	$old_message = $message;
+	$length = strlen( $message );
+
+	while ($i < $length) {
+
+		// Check for the start of a code block
+		$last_php_eol = $i > 1 ? strrpos( $message, PHP_EOL, $i - $length - 1 ) : false;
+		if ($i > 2 && substr($message, $i - 2, 3) === '```'  && $last_php_eol !== false && trim( substr( $message, $last_php_eol, $i - $last_php_eol-2)) === '') {
+
+			if ( $state['in_code_block'] ) {
+				echo "\033[m";
+				if ( false !== $state['maybe_code_block_end']) {
+		   			echo substr( $message, $state['maybe_code_block_end'], 2);
+					$state['maybe_code_block_end'] = false;
+				}
+				$state['in_code_block'] = false;
 			} else {
-				echo "\033[0m";
+				$state['code_block_start'] = true;
+				echo substr($message, $i - 2, 2);
 			}
-			$previous_chunk = $chunk;
+			echo $message[$i++];
 			continue;
 		}
 
-		if ( ! $state['headline'] && 0 === strpos( $chunk, '#' ) && PHP_EOL === $previous_chunk ) {
-			if ( '#' === $chunk ) {
-				$state['bold'] = true;
-				echo "\033[1m";
+		// If we're in a code block, just output the text as is
+		if ($state['code_block_start'] ) {
+			echo $message[$i];
+			if ($message[$i] === PHP_EOL) {
+				$state['code_block_start'] = false;
+				$state['in_code_block'] = true;
+				// show in darkgrey
+				echo "\033[90m";
 			}
-			echo "\033[4m";
-			$state['headline'] = true;
-			$state['trimnext'] = true;
-			$previous_chunk = $chunk;
+			$i++;
 			continue;
 		}
 
-		// A new line ends the bold state as a fallback.
-		if ( 0 === strpos( $previous_chunk, PHP_EOL ) && ( $state['bold'] || $state['headline'] ) ) {
-			echo "\033[0m";
-			$state['bold'] = false;
-			$state['headline'] = false;
-			$state['trimnext'] = false;
+		if ($state['in_code_block']) {
+			if ( false === $state['maybe_code_block_end'] && $message[$i] === '`' && $last_php_eol !== false && trim( substr( $message, $last_php_eol, $i - $last_php_eol-1) ) === '') {
+				$state['maybe_code_block_end'] = $i;
+				$i++;
+				continue;
+			}
+			if ( false !== $state['maybe_code_block_end'] && substr( $message, $i-1, 2) === '``' && $last_php_eol !== false && trim( substr( $message, $last_php_eol, $i - $last_php_eol-2) ) === '') {
+				$i++;
+				continue;
+			}
+			echo $message[$i++];
+			continue;
+		}
+
+		// Process bold and headline markers only outside code blocks
+		if ($message[$i] === '*') {
+			// The second *.
+			if ( $state['maybe_bold'] ) {
+				$state['bold'] = !$state['bold'];
+				echo $state['bold'] ? "\033[1m" : "\033[m";
+				$state['maybe_bold'] = false;
+			} else {
+				$state['maybe_bold'] = true;
+			}
+			$i++; // Move past the bold indicator
+			continue;
+		} elseif ( $state['maybe_bold'] ) {
+			// false alarm.
+			echo '*';
+			$state['maybe_bold'] = false;
+		}
+
+		// Process bold and headline markers only outside code blocks
+		if ($i > 1 && substr($message, $i-1, 2) === '**' && substr($message, $i - 2, 1) === PHP_EOL) {
+			$state['bold'] = !$state['bold'];
+			echo $state['bold'] ? "\033[1m" : "\033[m";
+			$i++; // Move past the bold indicator
+			continue;
+		}
+
+		if ( substr($message, $i, 1) === '`') {
+			$state['inline_code'] = !$state['inline_code'];
+			echo $state['inline_code'] ? "\033[34m" : "\033[m";
+			$i++;
+			continue;
 		}
 
 		if ( $state['trimnext'] ) {
-			$chunk = ltrim( $chunk );
-			if ( $chunk ) {
-				$state['trimnext'] = false;
+			if (trim($message[$i]) == '') {
+				$i++;
+				continue;
+			}
+			$state['trimnext'] = false;
+		}
+
+		if ( substr($message, $i, 1) === '#' && substr($message, $i - 1, 1) === PHP_EOL) {
+			// Start of a headline
+			$state['headline'] = true;
+			$state['trimnext'] = true;
+			echo "\033[4m";
+			while ( $i < $length && ( $message[$i] === '#' || $message[$i] === ' ') ) {
+				$i++;
+			}
+			continue;
+		}
+
+		// Reset states on new lines
+		if ($message[$i] === PHP_EOL) {
+			if ($state['bold'] || $state['headline']) {
+				echo "\033[m"; // Reset bold and headline
+				$state['bold'] = false;
+				$state['headline'] = false;
 			}
 		}
-		echo $chunk;
-		$previous_chunk = $chunk;
-	}
 
-	return $chunk;
+		echo $message[$i++];
+	}
 }
 
 readline_completion_function("dont_auto_complete");
@@ -169,7 +258,7 @@ Usage: $self [-l] [-f] [-r [number|searchterm]] [-m model] [-s system_prompt] [-
 Options:
   -l                 Resume last conversation.
   -r [number|search] Resume a previous conversation and list 'number' conversations or search them.
-  -d                 Ignore the model's answer.
+  -d                 Ignore the model's last answer. Useful when combining with -l to ask the question to another model.
   -v                 Be verbose.
   -f                 Allow file system writes for suggested file content.
   -m [model]         Use a specific model. Default: $model
@@ -511,7 +600,6 @@ curl_setopt(
 	$ch,
 	CURLOPT_WRITEFUNCTION,
 	function ( $curl, $data ) use ( &$message, &$chunk_overflow, &$state ) {
-		static $previous_chunk = '';
 		if ( 200 !== curl_getinfo( $curl, CURLINFO_HTTP_CODE ) ) {
 			$error = json_decode( trim( $chunk_overflow . $data ), true );
 			if ( $error ) {
@@ -533,7 +621,7 @@ curl_setopt(
 				$json = json_decode( trim( $item ), true );
 			}
 			if ( isset( $json['choices'][0]['delta']['content'] ) ) {
-				$previous_chunk = output_message( $json['choices'][0]['delta']['content'], $previous_chunk );
+				output_message( $json['choices'][0]['delta']['content'] );
 
 				$message .= $json['choices'][0]['delta']['content'];
 			} else {
@@ -720,6 +808,11 @@ while ( true ) {
 		// Persist history unless prepended by whitespace or coming from stdin.
 		fwrite( $fp, $message . PHP_EOL . PHP_EOL );
 	}
+
+	if ( isset( $options['v'] ) ) {
+		output_message( '---OUTPUTOKENS' );
+	}
+
 	if ( $stdin ) {
 		break;
 	}
