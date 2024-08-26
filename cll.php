@@ -4,7 +4,7 @@ $openai_key = getenv( 'OPENAI_API_KEY', true );
 $supported_models = array();
 $ansi = function_exists( 'posix_isatty' ) && posix_isatty( STDOUT );
 
-$options = getopt( 'ds:li:vhfm:r:', array( 'help', 'version' ), $initial_input );
+$options = getopt( 'ds:li:p:vhfm:r:', array( 'help', 'version' ), $initial_input );
 
 if ( ! isset( $options['m'] ) ) {
 	putenv('RES_OPTIONS=retrans:1 retry:1 timeout:1 attempts:1');
@@ -253,17 +253,18 @@ if ( isset( $options['h'] ) || isset( $options['help'] ) ) {
 	$offline = ! $online ? "(we're offline)" : '';
 	$self = basename( $_SERVER['argv'][0] );
 	echo <<<USAGE
-Usage: $self [-l] [-f] [-r [number|searchterm]] [-m model] [-s system_prompt] [-i image_file] [conversation_input]
+Usage: $self [-l] [-f] [-r [number|searchterm]] [-m model] [-s system_prompt] [-i input_file_s] [-p picture_file] [conversation_input]
 
 Options:
   -l                 Resume last conversation.
-  -r [number|search] Resume a previous conversation and list 'number' conversations or search them.
+  -r number|search   Resume a previous conversation and list 'number' conversations or search them.
   -d                 Ignore the model's last answer. Useful when combining with -l to ask the question to another model.
   -v                 Be verbose.
-  -f                 Allow file system writes for suggested file content.
+  -f                 Allow file system writes for suggested file content by the AI.
   -m [model]         Use a specific model. Default: $model
-  -i [image_file]    Add an image as input (only gpt-4o).
-  -s [system_prompt] Specify a system prompt preceeding the conversation.
+  -i input_file(s)   Read these files and add them to the prompt.
+  -p picture_file    Add an picture as input (only gpt-4o).
+  -s system_prompt   Specify a system prompt preceeding the conversation.
 
 Arguments:
   conversation_input  Input for the first conversation.
@@ -686,14 +687,37 @@ while ( true ) {
 
 		$fp = fopen( $full_history_file, 'a' );
 	}
-	if ( ! $system && preg_match( '/\b(php|wordpress|python|code)\b/i', $input ) ) {
-		$system = 'When responding with code sections in a backtick separated code block, please prepend it with the proposed filename in the form: "File: filename.ext"';
-		echo "Because code was requested, we're adding this System Prompt: $system", PHP_EOL;
 
-		array_unshift( $messages, array(
-			'role'    => 'system',
-			'content' => $system,
-		) );
+	if ( isset( $options['i'] ) ) {
+		$files = explode( ' ', $options['i'] );
+		foreach ( $files as $file ) {
+			if ( file_exists( $file ) ) {
+				echo 'Local File: ', $file, ' (', filesize( $file ), ' bytes):', PHP_EOL;
+				// show the first 5 lines:
+				echo "\033[90m";
+				$if = fopen( $file, 'r' );
+				for ( $i = 0; $i < 5; $i++ ) {
+					$line = fgets( $if );
+					if ( false === $line ) {
+						break;
+					}
+					echo $line;
+				}
+				fclose( $if );
+				echo "\033[m";
+				echo 'Add file content to the prompt? [y/N]: ';
+
+				$add = readline();
+				if ( 'y' !== strtolower( $add ) ) {
+					echo 'Skipping file: ', $file, PHP_EOL;
+					continue;
+				}
+				$input .= PHP_EOL . 'File: `' . $file . '`' . PHP_EOL . '```' . str_replace( '```', '\`\`\`', file_get_contents( $file ) ) . '```';
+			} else {
+				echo 'File not found: ', $file, PHP_EOL;
+			}
+		}
+		unset( $options['i'] );
 	}
 
 	if ( ltrim( $input ) === $input ) {
@@ -711,9 +735,9 @@ while ( true ) {
 	}
 
 	$image = false;
-	if ( isset( $options['i'] ) ) {
+	if ( isset( $options['p'] ) ) {
 		if ( preg_match( '/^(gpt-4o|llava)/', $model ) ) {
-			$image = trim( $options['i'] );
+			$image = trim( $options['p'] );
 			if ( ! filter_var( $image, FILTER_VALIDATE_URL ) ) {
 				if ( ! file_exists( $image ) ) {
 					echo 'Image file not found: ', $image, PHP_EOL;
@@ -742,6 +766,8 @@ while ( true ) {
 				),
 			),
 		);
+		// Only send the image in the first message.
+		unset( $options['p'] );
 	}
 
 	$messages[] = array(

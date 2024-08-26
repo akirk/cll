@@ -27,17 +27,18 @@ I recommend using an alias in your shell to have it available anywhere in your c
 ### Parameters
 
 ```
-Usage: cll [-l] [-f] [-r [number|searchterm]] [-m model] [-s system_prompt] [-i image_file] [conversation_input]
+Usage: cll [-l] [-f] [-r [number|searchterm]] [-m model] [-s system_prompt] [-i input_file_s] [-p picture_file] [conversation_input]
 
 Options:
   -l                 Resume last conversation.
-  -r [number|search] Resume a previous conversation and list 'number' conversations or search them.
-  -d                 Ignore the model's answer.
+  -r number|search   Resume a previous conversation and list 'number' conversations or search them.
+  -d                 Ignore the model's last answer. Useful when combining with -l to ask the question to another model.
   -v                 Be verbose.
-  -f                 Allow file system writes for suggested file content.
-  -m [model]         Use a specific model. Default: gpt-4o-mini
-  -i [image_file]    Add an image as input (only gpt-4o).
-  -s [system_prompt] Specify a system prompt preceeding the conversation.
+  -f                 Allow file system writes for suggested file content by the AI.
+  -m [model]         Use a specific model. Default: $model
+  -i input_file(s)   Read these files and add them to the prompt.
+  -p picture_file    Add an picture as input (only gpt-4o).
+  -s system_prompt   Specify a system prompt preceeding the conversation.
 
 Arguments:
   conversation_input  Input for the first conversation.
