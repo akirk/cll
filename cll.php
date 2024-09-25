@@ -26,8 +26,7 @@ function output_message( $message ) {
 	}
 	static $chunks = array();
 	if ( $message === '---OUTPUTOKENS' ) {
-		//lightgray
-		echo "\033[37m", PHP_EOL, json_encode( $chunks ), PHP_EOL, "\033[m";
+		echo PHP_EOL, 'Received ', count( $chunks ), " chunks: \033[37m", json_encode( $chunks ), PHP_EOL, "\033[m";
 		$chunks = array();
 		return;
 	} else {
@@ -205,6 +204,7 @@ if ( $online && ! empty( $openai_key ) ) {
 
 if ( $online && ! empty( $anthropic_key ) ) {
 	$supported_models['claude-3-5-sonnet-20240620'] = 'Anthropic';
+	$supported_models['claude-3-haiku-20240307'] = 'Anthropic';
 }
 
 curl_setopt( $ch, CURLOPT_URL, 'http://localhost:11434/api/tags' );
@@ -351,6 +351,10 @@ if ( isset( $options['m'] ) ) {
 	}
 }
 $model_provider = $supported_models[$model];
+$wrapper = array(
+	'model'  => $model,
+	'stream' => true,
+);
 
 if ( ! $stdin || isset( $options['v'] ) ) {
 	fprintf( STDERR, 'Model: ' . $model . ' via ' . $model_provider . ( isset( $options['v'] ) ? ' (verbose)' : '' ) . PHP_EOL );
@@ -531,10 +535,14 @@ if ( isset( $options['r'] ) ) {
 				$system = $options['s'];
 			}
 			echo 'System prompt: ', $system, PHP_EOL;
-			array_unshift( $messages, array(
-				'role'    => 'system',
-				'content' => $system,
-			) );
+			if ( $model_provider === 'Anthropic' ) {
+				$wrapper['system'] = $system;
+			} else {
+				array_unshift( $messages, array(
+					'role'    => 'system',
+					'content' => $system,
+				) );
+			}
 		}
 		foreach ( $history_files[ $last_conversations[ $sel ] ] as $k => $message ) {
 			if ( isset( $options['d'] ) && $k % 2 ) {
@@ -571,10 +579,15 @@ if ( isset( $options['r'] ) ) {
 		$system .= $options['s'];
 	}
 	if ( $system ) {
-		array_unshift( $messages, array(
-			'role'    => 'system',
-			'content' => $system,
-		) );
+		if ( $model_provider === 'Anthropic' ) {
+			$wrapper['system'] = $system;
+		} else {
+			array_unshift( $messages, array(
+				'role'    => 'system',
+				'content' => $system,
+			) );
+		}
+
 		if ( ! $stdin || isset( $options['v'] ) ) {
 			echo 'System prompt: ', $system, PHP_EOL;
 		}
@@ -598,6 +611,8 @@ $headers = array(
 	'Transfer-Encoding: chunked',
 );
 
+$usage = array();
+
 if ( 'OpenAI' === $model_provider ) {
 	curl_setopt( $ch, CURLOPT_URL, 'https://api.openai.com/v1/chat/completions' );
 	$headers[] = 'Authorization: Bearer ' . $openai_key;
@@ -615,7 +630,7 @@ curl_setopt( $ch, CURLOPT_HTTPHEADER, $headers );
 curl_setopt(
 	$ch,
 	CURLOPT_WRITEFUNCTION,
-	function ( $curl, $data ) use ( &$message, &$chunk_overflow, &$state, $model_provider ) {
+	function ( $curl, $data ) use ( &$message, &$chunk_overflow, &$usage, $model_provider ) {
 		if ( 200 !== curl_getinfo( $curl, CURLINFO_HTTP_CODE ) ) {
 			$error = json_decode( trim( $chunk_overflow . $data ), true );
 			if ( $error ) {
@@ -636,6 +651,13 @@ curl_setopt(
 			} else {
 				$json = json_decode( trim( $item ), true );
 			}
+
+			if ( isset( $json['message']['usage'] ) ) {
+				$usage = array_merge( $usage, $json['message']['usage'] );
+			} elseif ( isset( $json['usage'] ) ) {
+				$usage = array_merge( $usage, $json['usage'] );
+			}
+
 			if ( $model_provider === 'Anthropic' ) {
 				if ( isset( $json['delta']['text'] ) ) {
 					output_message( $json['delta']['text'] );
@@ -799,22 +821,23 @@ while ( true ) {
 		'role'    => 'user',
 		'content' => $input,
 	);
-
-	$options = array(
-		'model'        => $model,
-		'messages'     => $messages,
-		'stream'       => true,
-	);
+	$wrapper['messages'] = $messages;
 
 	if ( 'Anthropic' === $model_provider ) {
-		$options['max_tokens'] = 3200;
+		$wrapper['max_tokens'] = 3200;
+	}
+
+	if ( 'OpenAI' === $model_provider ) {
+		$wrapper['stream_options'] = array(
+			'include_usage' => true,
+		);
 	}
 
 	curl_setopt(
 		$ch,
 		CURLOPT_POSTFIELDS,
 		json_encode(
-		$options
+		$wrapper
 		)
 	);
 
@@ -868,6 +891,18 @@ while ( true ) {
 
 	if ( isset( $options['v'] ) ) {
 		output_message( '---OUTPUTOKENS' );
+		if ( ! empty( $usage ) ) {
+			echo 'Tokens';
+			$t = ': ';
+			foreach ( $usage as $type => $count ) {
+				$type = str_replace( '_tokens', '', $type );
+				if ( is_numeric( $count ) && $type !== 'total' ) {
+					echo $t, $count, ' ', $type;
+					$t = ', ';
+				}
+			}
+		echo PHP_EOL;
+		}
 	}
 
 	if ( $stdin ) {
