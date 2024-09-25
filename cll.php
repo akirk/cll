@@ -1,6 +1,7 @@
 <?php
 $version = '1.1.2';
 $openai_key = getenv( 'OPENAI_API_KEY', true );
+$anthropic_key = getenv( 'ANTHROPIC_API_KEY', true );
 $supported_models = array();
 $ansi = function_exists( 'posix_isatty' ) && posix_isatty( STDOUT );
 
@@ -202,6 +203,10 @@ if ( $online && ! empty( $openai_key ) ) {
 	$supported_models['gpt-4o'] = 'OpenAI';
 }
 
+if ( $online && ! empty( $anthropic_key ) ) {
+	$supported_models['claude-3-5-sonnet-20240620'] = 'Anthropic';
+}
+
 curl_setopt( $ch, CURLOPT_URL, 'http://localhost:11434/api/tags' );
 $ollama_models = json_decode( curl_exec( $ch ), true );
 if ( isset( $ollama_models['models'] ) ) {
@@ -214,6 +219,8 @@ if ( empty( $supported_models ) ) {
 	echo 'No supported models found.', PHP_EOL, PHP_EOL;
 	echo 'If you want to use ChatGPT, please set your OpenAI API key in the OPENAI_API_KEY environment variable:', PHP_EOL;
 	echo 'export OPENAI_API_KEY=sk-...', PHP_EOL, PHP_EOL;
+	echo 'If you want to use Claude, please set your Anthropic API key in the ANTHROPIC_API_KEY environment variable:', PHP_EOL;
+	echo 'export ANTHROPIC_API_KEY=sk-...', PHP_EOL, PHP_EOL;
 	echo 'If you want to use Ollama, please make sure it is accessible on localhost:11434', PHP_EOL;
 	exit( 1 );
 }
@@ -343,8 +350,10 @@ if ( isset( $options['m'] ) ) {
 		exit( 1 );
 	}
 }
+$model_provider = $supported_models[$model];
+
 if ( ! $stdin || isset( $options['v'] ) ) {
-	fprintf( STDERR, 'Model: ' . $model . ' via ' . $supported_models[$model] . PHP_EOL );
+	fprintf( STDERR, 'Model: ' . $model . ' via ' . $model_provider . ( isset( $options['v'] ) ? ' (verbose)' : '' ) . PHP_EOL );
 }
 
 $full_history_file = $history_directory . '/history.' . $time . '.' . preg_replace( '/[^a-z0-9]+/', '-', $model ) . '.txt';
@@ -588,10 +597,16 @@ $headers = array(
 	'Content-Type: application/json',
 	'Transfer-Encoding: chunked',
 );
-if ( 'OpenAI' === $supported_models[$model] ) {
+
+if ( 'OpenAI' === $model_provider ) {
 	curl_setopt( $ch, CURLOPT_URL, 'https://api.openai.com/v1/chat/completions' );
 	$headers[] = 'Authorization: Bearer ' . $openai_key;
-} elseif ( 'Ollama (local)' === $supported_models[$model] ) {
+} elseif ( 'Anthropic' === $model_provider ) {
+	curl_setopt( $ch, CURLOPT_URL, 'https://api.anthropic.com/v1/messages' );
+	$headers[] = 'x-api-key: ' . $anthropic_key;
+	$headers[] = 'anthropic-version: 2023-06-01';
+	$headers[] = 'Content-Type: application/json';
+} elseif ( 'Ollama (local)' === $model_provider ) {
 	curl_setopt( $ch, CURLOPT_URL, 'http://localhost:11434/v1/chat/completions' );
 }
 
@@ -600,7 +615,7 @@ curl_setopt( $ch, CURLOPT_HTTPHEADER, $headers );
 curl_setopt(
 	$ch,
 	CURLOPT_WRITEFUNCTION,
-	function ( $curl, $data ) use ( &$message, &$chunk_overflow, &$state ) {
+	function ( $curl, $data ) use ( &$message, &$chunk_overflow, &$state, $model_provider ) {
 		if ( 200 !== curl_getinfo( $curl, CURLINFO_HTTP_CODE ) ) {
 			$error = json_decode( trim( $chunk_overflow . $data ), true );
 			if ( $error ) {
@@ -621,12 +636,22 @@ curl_setopt(
 			} else {
 				$json = json_decode( trim( $item ), true );
 			}
-			if ( isset( $json['choices'][0]['delta']['content'] ) ) {
-				output_message( $json['choices'][0]['delta']['content'] );
+			if ( $model_provider === 'Anthropic' ) {
+				if ( isset( $json['delta']['text'] ) ) {
+					output_message( $json['delta']['text'] );
 
-				$message .= $json['choices'][0]['delta']['content'];
+					$message .= $json['delta']['text'];
+				} else {
+					$chunk_overflow = $item;
+				}
 			} else {
-				$chunk_overflow = $item;
+				if ( isset( $json['choices'][0]['delta']['content'] ) ) {
+					output_message( $json['choices'][0]['delta']['content'] );
+
+					$message .= $json['choices'][0]['delta']['content'];
+				} else {
+					$chunk_overflow = $item;
+				}
 			}
 		}
 
@@ -775,15 +800,21 @@ while ( true ) {
 		'content' => $input,
 	);
 
+	$options = array(
+		'model'        => $model,
+		'messages'     => $messages,
+		'stream'       => true,
+	);
+
+	if ( 'Anthropic' === $model_provider ) {
+		$options['max_tokens'] = 3200;
+	}
+
 	curl_setopt(
 		$ch,
 		CURLOPT_POSTFIELDS,
 		json_encode(
-			array(
-				'model'        => $model,
-				'messages'     => $messages,
-				'stream'       => true,
-			)
+		$options
 		)
 	);
 
