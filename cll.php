@@ -736,32 +736,119 @@ while ( true ) {
 	}
 
 	if ( isset( $options['i'] ) ) {
-		$files = explode( ' ', $options['i'] );
-		foreach ( $files as $file ) {
-			if ( file_exists( $file ) ) {
-				echo 'Local File: ', $file, ' (', filesize( $file ), ' bytes):', PHP_EOL;
-				// show the first 5 lines:
-				echo "\033[90m";
-				$if = fopen( $file, 'r' );
-				for ( $i = 0; $i < 5; $i++ ) {
-					$line = fgets( $if );
-					if ( false === $line ) {
-						break;
-					}
-					echo $line;
-				}
-				fclose( $if );
-				echo "\033[m";
-				echo 'Add file content to the prompt? [y/N]: ';
+		if ( ! is_array( $options['i'] ) ) {
+			$options['i'] = array( $options['i'] );
+		}
 
-				$add = readline();
-				if ( 'y' !== strtolower( $add ) ) {
-					echo 'Skipping file: ', $file, PHP_EOL;
-					continue;
+		$all_yes = false;
+		foreach ( $options['i'] as $glob ) {
+			if ( '.' === $glob ) {
+				$exclude_dirs = array();
+				$allow_all_subdirs = array();
+				$already_asked = array( '' );
+
+				$objects = new RecursiveIteratorIterator( new RecursiveDirectoryIterator( '.' ), RecursiveIteratorIterator::SELF_FIRST );
+				$files = array();
+				foreach ( $objects as $name => $object ) {
+					if ( './' === substr( $name, 0, 2 ) ) {
+						$name = substr( $name, 2 );
+					}
+					$dirs = explode( '/', $name );
+					$base_dir = implode( '/', array_slice( $dirs, 0, -1 ) );
+					foreach ( $dirs as $dir ) {
+						if ( '.' === substr( $dir, 0, 1 ) ) {
+							continue 2;
+						}
+					}
+
+					if ( ! in_array( $base_dir, $already_asked ) ) {
+						foreach ( $allow_all_subdirs as $allow_all_subdir ) {
+							if ( 0 === strpos( $base_dir, $allow_all_subdir ) ) {
+								echo 'Including directory: ', $base_dir, PHP_EOL;
+								$already_asked[] = $base_dir;
+								break;
+							}
+						}
+
+						foreach ( $exclude_dirs as $exclude_dir ) {
+							if ( 0 === strpos( $base_dir, $exclude_dir ) ) {
+								echo 'Skipping directory: ', $base_dir, PHP_EOL;
+								continue 2;
+							}
+						}
+
+					}
+
+					if ( ! in_array( $base_dir, $already_asked ) ) {
+						echo 'Include directory: ', $base_dir, ' [Y/n/a]: ';
+						$add = readline();
+						if ( 'n' === strtolower( $add ) ) {
+							echo 'Skipping directory: ', $base_dir, PHP_EOL;
+							$exclude_dirs[] = $base_dir;
+						} elseif ( 'a' === strtolower( $add ) ) {
+							$allow_all_subdirs[] = $base_dir;
+						}
+
+						$already_asked[] = $base_dir;
+					}
+
+					if ( in_array( $base_dir, $exclude_dirs ) ) {
+						continue;
+					}
+					if ( $object->isFile() ) {
+						$files[] = $name;
+					}
 				}
-				$input .= PHP_EOL . 'File: `' . $file . '`' . PHP_EOL . '```' . str_replace( '```', '\`\`\`', file_get_contents( $file ) ) . '```';
 			} else {
-				echo 'File not found: ', $file, PHP_EOL;
+				$files = glob( $glob );
+			}
+			if ( empty( $files ) ) {
+				echo 'No files found for: ', $glob, PHP_EOL;
+				continue;
+			}
+
+			if ( count( $files ) > 1 ) {
+				echo 'Found ', count( $files ), ' files: ', implode( ' ', array_slice( $files, 0, 5 ) ), ' ... ', PHP_EOL;
+			}
+
+			foreach ( $files as $file ) {
+				if ( file_exists( $file ) && is_readable( $file ) && is_file( $file ) ) {
+					$if = fopen( $file, 'r' );
+					$line = fgets( $if );
+					// skip if binary
+					if ( preg_match( '/[\x00-\x08\x0B\x0C\x0E-\x1F\x80-\xFF]/', $line ) ) {
+						echo 'Skipping binary file: ', $file, PHP_EOL;
+						fclose( $if );
+						continue;
+					}
+
+					// show the first 5 lines:
+					echo 'Local File: ', $file, ' (', filesize( $file ), ' bytes):', PHP_EOL;
+					echo "\033[90m";
+					for ( $i = 0; $i < 4; $i++ ) {
+						$line = fgets( $if );
+						if ( false === $line ) {
+							break;
+						}
+						echo $line;
+					}
+					fclose( $if );
+					echo "\033[m";
+					if ( ! $all_yes ) {
+						echo 'Add file content to the prompt? [Y/n/a]: ';
+
+						$add = readline();
+						if ( 'a' === strtolower( $add ) ) {
+							$all_yes = true;
+						} elseif ( 'n' === strtolower( $add ) ) {
+							echo 'Skipping file: ', $file, PHP_EOL;
+							continue;
+						}
+					}
+					$input .= PHP_EOL . 'File: `' . $file . '`' . PHP_EOL . '```' . str_replace( '```', '\`\`\`', file_get_contents( $file ) ) . '```';
+				} else {
+					echo 'File not found: ', $file, PHP_EOL;
+				}
 			}
 		}
 		unset( $options['i'] );
@@ -862,7 +949,7 @@ while ( true ) {
 		$input = $input[0]['text'];
 	}
 	if ( isset( $options['f'] ) ) {
-		preg_match_all( '/^(?:#+\s*)?File: `?([a-z0-9_.-]+)`?$/m', $message, $matches, PREG_SET_ORDER );
+		preg_match_all( '/^(?:#+\s*)?File: `?([a-z0-9_./-]+)`?$/m', $message, $matches, PREG_SET_ORDER );
 		if ( $matches ) {
 			foreach ( $matches as $match ) {
 				$file = $match[1];
