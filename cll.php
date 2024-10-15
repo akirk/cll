@@ -949,7 +949,7 @@ while ( true ) {
 		$input = $input[0]['text'];
 	}
 	if ( isset( $options['f'] ) ) {
-		preg_match_all( '/^(?:#+\s*)?File: `?([a-z0-9_./-]+)`?$/m', $message, $matches, PREG_SET_ORDER );
+		preg_match_all( '/^(?:#+\s*)?File: `?([a-z0-9_.\/-]+)`?$/m', $message, $matches, PREG_SET_ORDER );
 		if ( $matches ) {
 			foreach ( $matches as $match ) {
 				$file = $match[1];
