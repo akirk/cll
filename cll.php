@@ -34,6 +34,7 @@ function output_message( $message ) {
 	}
 	static $state = array(
 		'maybe_bold' => false,
+		'maybe_space_to_tab' => false,
 		'bold' => false,
 		'headline' => false,
 		'trimnext' => false,
@@ -83,6 +84,29 @@ function output_message( $message ) {
 		}
 
 		if ($state['in_code_block']) {
+			if ( $message[$i] === PHP_EOL ) {
+				$state['maybe_space_to_tab'] = 0;
+				echo $message[$i++];
+				continue;
+			}
+			if ( $state['maybe_space_to_tab'] !== false ) {
+				if ( $message[$i] === ' ') {
+					$i++;
+					$state['maybe_space_to_tab']++;
+					continue;
+				}
+
+				$spaces_count = $state['maybe_space_to_tab'];
+				$state['maybe_space_to_tab'] = false;
+				if ( $spaces_count % 4 == 0 ) {
+					echo str_repeat( "\t", $spaces_count / 4 );
+				} else {
+					echo str_repeat( " ", $spaces_count );
+				}
+				echo $message[$i++];
+				continue;
+			}
+			$state['maybe_space_to_tab'] = false;
 			if ( false === $state['maybe_code_block_end'] && $message[$i] === '`' && $last_php_eol !== false && trim( substr( $message, $last_php_eol, $i - $last_php_eol-1) ) === '') {
 				$state['maybe_code_block_end'] = $i;
 				$i++;
