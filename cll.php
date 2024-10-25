@@ -53,12 +53,12 @@ function output_message( $message ) {
 
 		// Check for the start of a code block
 		$last_php_eol = $i > 1 ? strrpos( $message, PHP_EOL, $i - $length - 1 ) : false;
-		if ($i > 2 && substr($message, $i - 2, 3) === '```'  && $last_php_eol !== false && trim( substr( $message, $last_php_eol, $i - $last_php_eol-2)) === '') {
+		if ( $i > 2 && substr( $message, $i - 2, 3 ) === '```'  && $last_php_eol !== false && trim( substr( $message, $last_php_eol, $i - $last_php_eol - 2 ) ) === '' ) {
 
 			if ( $state['in_code_block'] ) {
 				echo "\033[m";
 				if ( false !== $state['maybe_code_block_end']) {
-		   			echo substr( $message, $state['maybe_code_block_end'], 2);
+					echo substr( $message, $state['maybe_code_block_end'], 2 );
 					$state['maybe_code_block_end'] = false;
 				}
 				$state['in_code_block'] = false;
@@ -98,13 +98,15 @@ function output_message( $message ) {
 
 				$spaces_count = $state['maybe_space_to_tab'];
 				$state['maybe_space_to_tab'] = false;
-				if ( $spaces_count % 4 == 0 ) {
-					echo str_repeat( "\t", $spaces_count / 4 );
-				} else {
-					echo str_repeat( " ", $spaces_count );
+				if ( $spaces_count > 0 ) {
+					if ( $spaces_count % 4 == 0 ) {
+						echo str_repeat( "\t", $spaces_count / 4 );
+					} else {
+						echo str_repeat( " ", $spaces_count );
+					}
+					echo $message[$i++];
+					continue;
 				}
-				echo $message[$i++];
-				continue;
 			}
 			$state['maybe_space_to_tab'] = false;
 			if ( false === $state['maybe_code_block_end'] && $message[$i] === '`' && $last_php_eol !== false && trim( substr( $message, $last_php_eol, $i - $last_php_eol-1) ) === '') {
@@ -582,8 +584,7 @@ if ( isset( $options['r'] ) ) {
 			if ( 0 === $k % 2 ) {
 				echo '> ';
 			}
-			output_message( $message );
-			echo PHP_EOL;
+			output_message( $message . PHP_EOL );
 		}
 		if ( isset( $options['d'] ) ) {
 			$initial_input = ' ';
