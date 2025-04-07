@@ -34,6 +34,8 @@ function output_message( $message ) {
 	}
 	static $state = array(
 		'maybe_bold' => false,
+		'maybe_underline' => false,
+		'maybe_underline_words' => 0,
 		'maybe_space_to_tab' => false,
 		'bold' => false,
 		'headline' => false,
@@ -53,6 +55,8 @@ function output_message( $message ) {
 
 		// Check for the start of a code block
 		$last_php_eol = $i > 1 ? strrpos( $message, PHP_EOL, $i - $length - 1 ) : false;
+		$is_word_delimiter = strpos( PHP_EOL . ' ,;.-_!?()[]{}:', $message[$i] ) !== false;
+
 		if ( $i > 2 && substr( $message, $i - 2, 3 ) === '```'  && $last_php_eol !== false && trim( substr( $message, $last_php_eol, $i - $last_php_eol - 2 ) ) === '' ) {
 
 			if ( $state['in_code_block'] ) {
@@ -129,15 +133,45 @@ function output_message( $message ) {
 				$state['bold'] = !$state['bold'];
 				echo $state['bold'] ? "\033[1m" : "\033[m";
 				$state['maybe_bold'] = false;
+			} elseif ( false !== $state['maybe_underline'] ) {
+				// write the buffered word with an underline
+				echo "\033[4m";
+				echo substr( $message, $state['maybe_underline'], $i - $state['maybe_underline'] );
+				echo "\033[m";
+				$state['maybe_underline'] = false;
 			} else {
 				$state['maybe_bold'] = true;
 			}
 			$i++; // Move past the bold indicator
 			continue;
 		} elseif ( $state['maybe_bold'] ) {
-			// false alarm.
-			echo '*';
+			// No second *.
 			$state['maybe_bold'] = false;
+			// This might become an underline if we find another * before a word separator.
+			if ( ! $is_word_delimiter ) {
+				$state['maybe_underline'] = $i;
+				$state['maybe_underline_words'] = 0;
+				$i++;
+				continue;
+			}
+			$i--;
+		} elseif ( false !== $state['maybe_underline'] ) {
+			if ( ! $is_word_delimiter ) {
+				// buffer
+				$i++;
+				continue;
+			}
+			if ( $is_word_delimiter && $message[$i] !== PHP_EOL ) {
+				$state['maybe_underline_words']++;
+				if ( $state['maybe_underline_words'] < 10 ) {
+					// buffer
+					$i++;
+					continue;
+				}
+			}
+			echo substr( $message, $state['maybe_underline'] - 1, $i - $state['maybe_underline'] + 1);
+			$state['maybe_underline'] = false;
+			$state['maybe_underline_words'] = 0;
 		}
 
 		// Process bold and headline markers only outside code blocks
@@ -163,7 +197,7 @@ function output_message( $message ) {
 			$state['trimnext'] = false;
 		}
 
-		if ( substr($message, $i, 1) === '#' && substr($message, $i - 1, 1) === PHP_EOL) {
+		if ( substr($message, $i, 1) === '#' && ( substr($message, $i - 1, 1) === PHP_EOL || !$i ) ) {
 			// Start of a headline
 			$state['headline'] = true;
 			$state['trimnext'] = true;
@@ -176,16 +210,23 @@ function output_message( $message ) {
 
 		// Reset states on new lines
 		if ($message[$i] === PHP_EOL) {
-			if ($state['bold'] || $state['headline']) {
+			if ( $i > 2 && substr($message, $i - 3, 3) === PHP_EOL . PHP_EOL . PHP_EOL ) {
+				$i++;
+				continue;
+			}
+			if ($state['bold'] || $state['headline'] || $state['maybe_bold'] || $state['maybe_underline']) {
 				echo "\033[m"; // Reset bold and headline
 				$state['bold'] = false;
 				$state['headline'] = false;
+				$state['maybe_bold'] = false;
+				$state['maybe_underline'] = false;
 			}
 		}
 
 		echo $message[$i++];
 	}
 }
+
 
 readline_completion_function("dont_auto_complete");
 
@@ -251,7 +292,7 @@ if ( empty( $supported_models ) ) {
 	exit( 1 );
 }
 
-$model_weight = array_flip( array_reverse( array( 'gpt-4o-mini', 'gemma', 'llama3', 'llama2' ) ) );
+$model_weight = array_flip( array_reverse( array( 'gpt-4o-mini', 'gemma3', 'llama3', 'llama2' ) ) );
 uksort( $supported_models, function( $a, $b ) use ( $model_weight ) {
 	$a_weight = $b_weight = -1;
 	foreach ( $model_weight as $model => $weight ) {
@@ -840,8 +881,8 @@ while ( true ) {
 				if ( file_exists( $file ) && is_readable( $file ) && is_file( $file ) ) {
 					$if = fopen( $file, 'r' );
 					$line = fgets( $if );
-					// skip if binary
-					if ( preg_match( '/[\x00-\x08\x0B\x0C\x0E-\x1F\x80-\xFF]/', $line ) ) {
+					// skip if binary but an utf8 text is ok
+					if ( preg_match( '/[\x00-\x08\x0B\x0C\x0E-\x1F\x80-\xFF]/', $line ) && ! preg_match( '/^[\x09\x0A\x0C\x0D\x20-\x7E\xA0-\xFF]+$/', $line ) ) {
 						echo 'Skipping binary file: ', $file, PHP_EOL;
 						fclose( $if );
 						continue;
