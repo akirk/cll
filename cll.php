@@ -20,6 +20,10 @@ curl_setopt( $ch, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1 );
 
 function dont_auto_complete ($input, $index) { return []; }
 function output_message( $message ) {
+	global $ansi;
+	if ( ! isset( $ansi ) ) {
+		$ansi = false;
+	}
 	static $old_message = '';
 	if ( $message === '') {
 		$old_message = '';
@@ -54,34 +58,48 @@ function output_message( $message ) {
 	while ($i < $length) {
 
 		// Check for the start of a code block
-		$last_php_eol = $i > 1 ? strrpos( $message, PHP_EOL, $i - $length - 1 ) : false;
+		$last_php_eol = $i > 1 ? strrpos( $message, PHP_EOL, $i - $length - 1 ) : 0;
 		$is_word_delimiter = strpos( PHP_EOL . ' ,;.-_!?()[]{}:', $message[$i] ) !== false;
 
-		if ( $i > 2 && substr( $message, $i - 2, 3 ) === '```'  && $last_php_eol !== false && trim( substr( $message, $last_php_eol, $i - $last_php_eol - 2 ) ) === '' ) {
+		if ( $i > 1 && substr( $message, $i - 2, 3 ) === '```' && trim( substr( $message, $last_php_eol, $i - $last_php_eol - 2 ) ) === '' ) {
 
+			// Strip code delimiters when in ansi.
 			if ( $state['in_code_block'] ) {
-				echo "\033[m";
+				if ( $ansi ) {
+					echo "\033[m";
+				}
 				if ( false !== $state['maybe_code_block_end']) {
-					echo substr( $message, $state['maybe_code_block_end'], 2 );
+					if ( $ansi ) {
+						echo substr( $message, $state['maybe_code_block_end'], 2 );
+					}
 					$state['maybe_code_block_end'] = false;
 				}
 				$state['in_code_block'] = false;
 			} else {
 				$state['code_block_start'] = true;
-				echo substr($message, $i - 2, 2);
+				if ( $ansi ) {
+					echo substr($message, $i - 2, 2);
+				}
 			}
-			echo $message[$i++];
+			if ( $ansi ) {
+				echo $message[$i];
+			}
+			$i++;
 			continue;
 		}
 
 		// If we're in a code block, just output the text as is
 		if ($state['code_block_start'] ) {
-			echo $message[$i];
+			if ( $ansi ) {
+				echo $message[$i];
+			}
 			if ($message[$i] === PHP_EOL) {
 				$state['code_block_start'] = false;
 				$state['in_code_block'] = true;
 				// show in darkgrey
-				echo "\033[90m";
+				if ( $ansi ) {
+					echo "\033[90m";
+				}
 			}
 			$i++;
 			continue;
@@ -113,12 +131,12 @@ function output_message( $message ) {
 				}
 			}
 			$state['maybe_space_to_tab'] = false;
-			if ( false === $state['maybe_code_block_end'] && $message[$i] === '`' && $last_php_eol !== false && trim( substr( $message, $last_php_eol, $i - $last_php_eol-1) ) === '') {
+			if ( false === $state['maybe_code_block_end'] && $message[$i] === '`' && trim( substr( $message, $last_php_eol, $i - $last_php_eol-1) ) === '') {
 				$state['maybe_code_block_end'] = $i;
 				$i++;
 				continue;
 			}
-			if ( false !== $state['maybe_code_block_end'] && substr( $message, $i-1, 2) === '``' && $last_php_eol !== false && trim( substr( $message, $last_php_eol, $i - $last_php_eol-2) ) === '') {
+			if ( false !== $state['maybe_code_block_end'] && substr( $message, $i-1, 2) === '``' && trim( substr( $message, $last_php_eol, $i - $last_php_eol-2) ) === '') {
 				$i++;
 				continue;
 			}
@@ -131,13 +149,19 @@ function output_message( $message ) {
 			// The second *.
 			if ( $state['maybe_bold'] ) {
 				$state['bold'] = !$state['bold'];
-				echo $state['bold'] ? "\033[1m" : "\033[m";
+				if ( $ansi ) {
+					echo $state['bold'] ? "\033[1m" : "\033[m";
+				}
 				$state['maybe_bold'] = false;
 			} elseif ( false !== $state['maybe_underline'] ) {
 				// write the buffered word with an underline
-				echo "\033[4m";
+				if ( $ansi ) {
+					echo "\033[4m";
+				}
 				echo substr( $message, $state['maybe_underline'], $i - $state['maybe_underline'] );
-				echo "\033[m";
+				if ( $ansi ) {
+					echo "\033[m";
+				}
 				$state['maybe_underline'] = false;
 			} else {
 				$state['maybe_bold'] = true;
@@ -163,7 +187,7 @@ function output_message( $message ) {
 			}
 			if ( $is_word_delimiter && $message[$i] !== PHP_EOL ) {
 				$state['maybe_underline_words']++;
-				if ( $state['maybe_underline_words'] < 10 ) {
+				if ( $state['maybe_underline_words'] < 3 ) {
 					// buffer
 					$i++;
 					continue;
@@ -177,14 +201,18 @@ function output_message( $message ) {
 		// Process bold and headline markers only outside code blocks
 		if ($i > 1 && substr($message, $i-1, 2) === '**' && substr($message, $i - 2, 1) === PHP_EOL) {
 			$state['bold'] = !$state['bold'];
-			echo $state['bold'] ? "\033[1m" : "\033[m";
+			if ( $ansi ) {
+				echo $state['bold'] ? "\033[1m" : "\033[m";
+			}
 			$i++; // Move past the bold indicator
 			continue;
 		}
 
 		if ( substr($message, $i, 1) === '`') {
 			$state['inline_code'] = !$state['inline_code'];
-			echo $state['inline_code'] ? "\033[34m" : "\033[m";
+			if ( $ansi ) {
+				echo $state['inline_code'] ? "\033[34m" : "\033[m";
+			}
 			$i++;
 			continue;
 		}
@@ -226,7 +254,6 @@ function output_message( $message ) {
 		echo $message[$i++];
 	}
 }
-
 
 readline_completion_function("dont_auto_complete");
 
@@ -386,6 +413,7 @@ if ( $stat['size'] > 0 ) {
 		$initial_input .= $in;
 	}
 	$stdin = true;
+	$ansi = false;
 }
 fclose( $fp_stdin );
 
@@ -423,7 +451,7 @@ $wrapper = array(
 	'stream' => true,
 );
 
-if ( ! $stdin || isset( $options['v'] ) ) {
+if ( $ansi || isset( $options['v'] ) ) {
 	fprintf( STDERR, 'Model: ' . $model . ' via ' . $model_provider . ( isset( $options['v'] ) ? ' (verbose)' : '' ) . PHP_EOL );
 }
 
@@ -654,17 +682,17 @@ if ( isset( $options['r'] ) ) {
 			) );
 		}
 
-		if ( ! $stdin || isset( $options['v'] ) ) {
+		if ( $ansi || isset( $options['v'] ) ) {
 			echo 'System prompt: ', $system, PHP_EOL;
 		}
 	}
 	if ( trim( $initial_input ) ) {
-		if ( ! $stdin || isset( $options['v'] ) ) {
+		if ( $ansi || isset( $options['v'] ) ) {
 			echo '> ', $initial_input, PHP_EOL;
 		}
 	}
 } elseif ( trim( $initial_input ) ) {
-	if ( ! $stdin || isset( $options['v'] ) ) {
+	if ( $ansi || isset( $options['v'] ) ) {
 		echo '> ', $initial_input, PHP_EOL;
 	}
 }
@@ -753,6 +781,8 @@ while ( true ) {
 	if ( ! empty( $initial_input ) ) {
 		$input = $initial_input;
 		$initial_input = null;
+	} elseif ( ! $ansi ) {
+		break;
 	} else {
 		$input = readline( '> ' );
 	}
@@ -994,7 +1024,7 @@ while ( true ) {
 		)
 	);
 
-	if ( ! $stdin || isset( $options['v'] ) ) {
+	if ( $ansi || isset( $options['v'] ) ) {
 		echo PHP_EOL;
 	}
 	$message = '';
@@ -1004,7 +1034,7 @@ while ( true ) {
 		echo 'CURL Error: ', curl_error( $ch ), PHP_EOL;
 		exit( 1 );
 	}
-	if ( ! $stdin || isset( $options['v'] ) ) {
+	if ( $ansi || isset( $options['v'] ) ) {
 		echo PHP_EOL;
 	}
 	$messages[] = array(
