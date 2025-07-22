@@ -260,14 +260,27 @@ readline_completion_function("dont_auto_complete");
 
 $readline_history_file = __DIR__ . '/.history';
 $history_base_directory = __DIR__ . '/chats/';
+$sqlite_db_path = __DIR__ . '/chats.sqlite';
 $time = time();
 
-// Initialize log storage
+// Initialize log storage - prefer SQLite, fallback to file storage
 try {
-	$logStorage = new FileLogStorage($history_base_directory);
+	if (class_exists('PDO') && in_array('sqlite', PDO::getAvailableDrivers())) {
+		$logStorage = new SQLiteLogStorage($sqlite_db_path);
+		$storage_type = 'SQLite';
+	} else {
+		$logStorage = new FileLogStorage($history_base_directory);
+		$storage_type = 'File';
+	}
 } catch (Exception $e) {
-	echo 'Error initializing log storage: ', $e->getMessage(), PHP_EOL;
-	exit(1);
+	// Fallback to file storage if SQLite fails
+	try {
+		$logStorage = new FileLogStorage($history_base_directory);
+		$storage_type = 'File (fallback)';
+	} catch (Exception $e2) {
+		echo 'Error initializing log storage: ', $e2->getMessage(), PHP_EOL;
+		exit(1);
+	}
 }
 
 $history_directory = $history_base_directory . date( 'Y/m', $time );
@@ -482,6 +495,7 @@ $wrapper = array(
 
 if ( $ansi || isset( $options['v'] ) ) {
 	fprintf( STDERR, 'Model: ' . $model . ' via ' . $model_provider . ( isset( $options['v'] ) ? ' (verbose)' : '' ) . PHP_EOL );
+	fprintf( STDERR, 'Storage: ' . $storage_type . PHP_EOL );
 }
 
 $conversation_id = $time;
@@ -537,16 +551,17 @@ if ( isset( $options['r'] ) ) {
 
 		if ( !empty( $last_history_files ) ) {
 			$length = 10;
-			foreach ( $last_history_files as $k => $last_history_file ) {
-				$metadata = $logStorage->getConversationMetadata($last_history_file);
+			foreach ( $last_history_files as $k => $conversation_key ) {
+				// Handle both file paths (FileLogStorage) and conversation IDs (SQLiteLogStorage)
+				$metadata = $logStorage->getConversationMetadata($conversation_key);
 				if (!$metadata) {
-					unset( $history_files[ $last_history_file ] );
+					unset( $history_files[ $conversation_key ] );
 					unset( $last_history_files[ $k ] );
 					continue;
 				}
 
 				$used_model = $metadata['model'];
-				if ( 'txt' === $used_model ) {
+				if ( 'txt' === $used_model || empty($used_model) ) {
 					$used_model = '';
 				} else {
 					if ( ! isset( $options['m'] ) ) {
@@ -571,14 +586,14 @@ if ( isset( $options['r'] ) ) {
 					}
 				}
 
-				$split = $logStorage->loadConversation($last_history_file);
+				$split = $logStorage->loadConversation($conversation_key);
 				if (!$split || count($split) < 2) {
-					unset( $history_files[ $last_history_file ] );
+					unset( $history_files[ $conversation_key ] );
 					unset( $last_history_files[ $k ] );
 					continue;
 				}
 
-				$history_files[ $last_history_file ] = $split;
+				$history_files[ $conversation_key ] = $split;
 				$answers = $metadata['answers'];
 
 				$c = $c + 1;
@@ -589,7 +604,11 @@ if ( isset( $options['r'] ) ) {
 					if ( $ansi ) {
 						echo "\033[1m";
 					}
-					echo ltrim( str_replace( PHP_EOL, ' ', substr( $history_files[ $last_history_file ][0], 0, 100 ) ), '> ' );
+					$first_message = $history_files[ $conversation_key ][0];
+					if (substr($first_message, 0, 7) === 'System:') {
+						$first_message = isset($history_files[ $conversation_key ][1]) ? $history_files[ $conversation_key ][1] : '';
+					}
+					echo ltrim( str_replace( PHP_EOL, ' ', substr( $first_message, 0, 100 ) ), '> ' );
 					if ( $ansi ) {
 						echo "\033[0m";
 						echo PHP_EOL;
@@ -604,7 +623,7 @@ if ( isset( $options['r'] ) ) {
 				}
 				echo PHP_EOL;
 
-				$last_conversations[ $c ] = $last_history_file;
+				$last_conversations[ $c ] = $conversation_key;
 				if ( isset( $options['l'] ) ) {
 					break;
 				}
@@ -838,8 +857,17 @@ while ( true ) {
 		}
 
 		if ( $sel && $last_conversations && isset( $last_conversations[ $sel ] ) ) {
-			$source_conversation_id = basename($last_conversations[ $sel ], '.txt');
-			$source_conversation_id = preg_replace('/^history\.(\d+)\..*$/', '$1', $source_conversation_id);
+			$source_key = $last_conversations[ $sel ];
+			
+			// Extract conversation ID depending on storage type
+			if ($storage_type === 'SQLite') {
+				$source_conversation_id = $source_key;
+			} else {
+				// File storage - extract from filename
+				$source_conversation_id = basename($source_key, '.txt');
+				$source_conversation_id = preg_replace('/^history\.(\d+)\..*$/', '$1', $source_conversation_id);
+			}
+			
 			$logStorage->copyConversation($source_conversation_id, $conversation_id);
 
 			if ( $system ) {
