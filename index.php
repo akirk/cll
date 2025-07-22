@@ -180,6 +180,7 @@ function processInlineFormatting($text) {
         .conversation-list { list-style: none; padding: 0; }
         .conversation-item { margin-bottom: 15px; padding: 15px; border: 1px solid #ddd; border-radius: 6px; background: #fafafa; }
         .conversation-item h3 { margin: 0 0 8px 0; }
+        .conversation-item .tags { float: right; }
         .conversation-meta { color: #666; font-size: 0.9em; margin-bottom: 8px; }
         .tags { margin-top: 8px; }
         .tag { display: inline-block; background: #e0e0e0; color: #333; padding: 2px 6px; border-radius: 3px; font-size: 0.8em; margin-right: 5px; text-decoration: none; }
