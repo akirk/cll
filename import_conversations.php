@@ -24,10 +24,22 @@ class ConversationImporter {
             return;
         }
 
-        echo "Found " . count($conversations) . " conversations to process.\n\n";
-
+        // Sort conversations by creation date (oldest first) so they get sequential IDs
+        $conversationsWithDates = [];
         foreach ($conversations as $filePath) {
-            $this->importConversation($filePath, $dryRun);
+            $createdAt = $this->extractCreationDate($filePath);
+            $conversationsWithDates[] = ['path' => $filePath, 'created_at' => $createdAt];
+        }
+
+        // Sort by creation date (oldest first)
+        usort($conversationsWithDates, function($a, $b) {
+            return $a['created_at'] <=> $b['created_at'];
+        });
+
+        echo "Found " . count($conversationsWithDates) . " conversations to process (sorted oldest first).\n\n";
+
+        foreach ($conversationsWithDates as $conversation) {
+            $this->importConversation($conversation['path'], $dryRun);
         }
 
         $this->printSummary();
@@ -43,17 +55,12 @@ class ConversationImporter {
                 return;
             }
 
-            // Extract conversation ID from filename
-            $conversationId = $this->extractConversationId($filePath);
-            if (!$conversationId) {
-                echo "⚠️  Could not extract conversation ID from: $filePath\n";
-                $this->skipped++;
-                return;
-            }
+            // Extract creation date from filename (we'll use autoincrement for ID)
+            $createdAt = $this->extractCreationDate($filePath);
+            $originalId = $this->extractConversationId($filePath);
 
-            // Check if already imported
-            if (!$dryRun && $this->sqliteStorage->getConversationMetadata($conversationId)) {
-                echo "⏭️  Already imported: $conversationId\n";
+            if (!$originalId) {
+                echo "⚠️  Could not extract timestamp from: $filePath\n";
                 $this->skipped++;
                 return;
             }
@@ -67,13 +74,15 @@ class ConversationImporter {
             }
 
             if ($dryRun) {
-                echo "📄 Would import: $conversationId ({$metadata['model']}, {$metadata['answers']} answers, {$metadata['word_count']} words)\n";
+                echo "📄 Would import: {$originalId} ({$metadata['model']}, {$metadata['answers']} answers, {$metadata['word_count']} words) from " . date('Y-m-d H:i', $createdAt) . "\n";
                 $this->imported++;
                 return;
             }
 
-            // Initialize conversation in SQLite
-            $this->sqliteStorage->initializeConversation($conversationId, $metadata['model']);
+            $currentTime = $createdAt;
+
+            // Initialize conversation in SQLite with extracted creation date (let SQLite auto-assign ID)
+            $newConversationId = $this->sqliteStorage->initializeConversation(null, $metadata['model'], $createdAt);
 
             // Import messages
             $systemPromptSet = false;
@@ -81,18 +90,19 @@ class ConversationImporter {
                 if ($i === 0 && substr($message, 0, 7) === 'System:') {
                     // Extract and set system prompt
                     $systemPrompt = trim(substr($message, 7));
-                    $this->sqliteStorage->writeSystemPrompt($conversationId, $systemPrompt);
+                    $this->sqliteStorage->writeSystemPrompt($newConversationId, $systemPrompt);
                     $systemPromptSet = true;
                 } elseif ($i % 2 === ($systemPromptSet ? 1 : 0)) {
                     // User message (odd index if system prompt exists, even otherwise)
-                    $this->sqliteStorage->writeUserMessage($conversationId, $message);
+                    $this->sqliteStorage->writeUserMessage($newConversationId, $message, $currentTime);
                 } else {
                     // Assistant message
-                    $this->sqliteStorage->writeAssistantMessage($conversationId, $message);
+                    $this->sqliteStorage->writeAssistantMessage($newConversationId, $message, $currentTime);
                 }
+                $currentTime += 10; // Increment time by 10 seconds for each message
             }
 
-            echo "✅ Imported: $conversationId ({$metadata['model']}, {$metadata['answers']} answers)\n";
+            echo "✅ Imported: ID $newConversationId (was {$originalId}) - {$metadata['model']}, {$metadata['answers']} answers, " . date('Y-m-d H:i', $createdAt) . "\n";
             $this->imported++;
 
         } catch (Exception $e) {
@@ -107,6 +117,14 @@ class ConversationImporter {
             return $matches[1];
         }
         return null;
+    }
+
+    private function extractCreationDate($filePath) {
+        $filename = basename($filePath);
+        if (preg_match('/^history\.(\d+)\./', $filename, $matches)) {
+            return intval($matches[1]);
+        }
+        return time(); // fallback to current time
     }
 
     private function printSummary() {

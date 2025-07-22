@@ -1,10 +1,10 @@
 <?php
 
 abstract class LogStorage {
-    abstract public function initializeConversation($conversationId, $model);
+    abstract public function initializeConversation($conversationId, $model, $createdAt = null);
     abstract public function writeSystemPrompt($conversationId, $systemPrompt);
-    abstract public function writeUserMessage($conversationId, $message);
-    abstract public function writeAssistantMessage($conversationId, $message);
+    abstract public function writeUserMessage($conversationId, $message, $createdAt = null);
+    abstract public function writeAssistantMessage($conversationId, $message, $createdAt = null);
     abstract public function loadConversation($conversationId);
     abstract public function findConversations($limit = 10, $search = null);
     abstract public function getConversationMetadata($conversationId);
@@ -24,7 +24,7 @@ class FileLogStorage extends LogStorage {
         }
     }
 
-    public function initializeConversation($conversationId, $model) {
+    public function initializeConversation($conversationId, $model, $createdAt = null) {
         $historyDirectory = $this->getHistoryDirectory($conversationId);
         if (!file_exists($historyDirectory)) {
             mkdir($historyDirectory, 0777, true);
@@ -42,7 +42,7 @@ class FileLogStorage extends LogStorage {
         fwrite($fp, 'System: ' . $systemPrompt . PHP_EOL);
     }
 
-    public function writeUserMessage($conversationId, $message) {
+    public function writeUserMessage($conversationId, $message, $createdAt = null) {
         $fp = $this->getFileHandle($conversationId);
         if (false === strpos($message, PHP_EOL)) {
             fwrite($fp, '> ' . $message . PHP_EOL . PHP_EOL);
@@ -51,7 +51,7 @@ class FileLogStorage extends LogStorage {
         }
     }
 
-    public function writeAssistantMessage($conversationId, $message) {
+    public function writeAssistantMessage($conversationId, $message, $createdAt = null) {
         $fp = $this->getFileHandle($conversationId);
         fwrite($fp, $message . PHP_EOL . PHP_EOL);
     }
@@ -85,7 +85,7 @@ class FileLogStorage extends LogStorage {
         $time = time();
         
         for ($i = 0; $i > -300; $i -= 20) {
-            $pattern = $this->baseDirectory . '/' . date('Y/m', $time + $i) . '/history.*';
+            $pattern = $this->baseDirectory . '/*/*/history.*';
             $moreHistoryFiles = array_flip(glob($pattern));
             
             if ($search) {
@@ -118,6 +118,10 @@ class FileLogStorage extends LogStorage {
         $wordCount = str_word_count($conversationContents);
         
         $split = preg_split('/^>(?: ([^\n]*)|>> (.*)\n\.)\n\n/ms', trim($conversationContents), -1, PREG_SPLIT_DELIM_CAPTURE);
+        if ( ! is_array($split) || count($split) < 2) {
+            return null;
+        }
+
         $answers = intval(count(array_filter($split)) / 2);
 
         return [
@@ -203,18 +207,19 @@ class SQLiteLogStorage extends LogStorage {
         // Create tables
         $this->db->exec("
             CREATE TABLE IF NOT EXISTS conversations (
-                id TEXT PRIMARY KEY,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 model TEXT NOT NULL,
                 system_prompt TEXT,
                 created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL
+                updated_at INTEGER NOT NULL,
+                tags TEXT DEFAULT ''
             )
         ");
 
         $this->db->exec("
             CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                conversation_id TEXT NOT NULL,
+                conversation_id INTEGER NOT NULL,
                 role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
                 content TEXT NOT NULL,
                 created_at INTEGER NOT NULL,
@@ -224,16 +229,20 @@ class SQLiteLogStorage extends LogStorage {
 
         $this->db->exec("CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id)");
         $this->db->exec("CREATE INDEX IF NOT EXISTS idx_conversations_created ON conversations(created_at DESC)");
+        $this->db->exec("CREATE INDEX IF NOT EXISTS idx_conversations_tags ON conversations(tags)");
     }
 
-    public function initializeConversation($conversationId, $model) {
-        $stmt = $this->db->prepare("
-            INSERT OR REPLACE INTO conversations (id, model, created_at, updated_at) 
-            VALUES (?, ?, ?, ?)
-        ");
+    public function initializeConversation($conversationId, $model, $createdAt = null) {
+        // Always use autoincrement for SQLite - ignore provided conversationId
+        $createdAt = $createdAt ?: time();
         $time = time();
-        $stmt->execute([$conversationId, $model, $time, $time]);
-        return $conversationId;
+
+        $stmt = $this->db->prepare("
+            INSERT INTO conversations (model, created_at, updated_at)
+            VALUES (?, ?, ?)
+        ");
+        $stmt->execute([$model, $createdAt, $time]);
+        return $this->db->lastInsertId();
     }
 
     public function writeSystemPrompt($conversationId, $systemPrompt) {
@@ -249,31 +258,33 @@ class SQLiteLogStorage extends LogStorage {
         $this->writeMessage($conversationId, 'system', $systemPrompt);
     }
 
-    public function writeUserMessage($conversationId, $message) {
-        $this->writeMessage($conversationId, 'user', $message);
+    public function writeUserMessage($conversationId, $message, $createdAt = null) {
+        $this->writeMessage($conversationId, 'user', $message, $createdAt);
     }
 
-    public function writeAssistantMessage($conversationId, $message) {
-        $this->writeMessage($conversationId, 'assistant', $message);
+    public function writeAssistantMessage($conversationId, $message, $createdAt = null) {
+        $this->writeMessage($conversationId, 'assistant', $message, $createdAt);
+        $this->updateConversationTags($conversationId);
     }
 
-    private function writeMessage($conversationId, $role, $content) {
+    private function writeMessage($conversationId, $role, $content, $createdAt = null) {
+        $createdAt = $createdAt ?: time();
         $stmt = $this->db->prepare("
             INSERT INTO messages (conversation_id, role, content, created_at) 
             VALUES (?, ?, ?, ?)
         ");
-        $stmt->execute([$conversationId, $role, $content, time()]);
+        $stmt->execute([$conversationId, $role, $content, $createdAt]);
 
         // Update conversation timestamp
         $updateStmt = $this->db->prepare("
             UPDATE conversations SET updated_at = ? WHERE id = ?
         ");
-        $updateStmt->execute([time(), $conversationId]);
+        $updateStmt->execute([$createdAt, $conversationId]);
     }
 
     public function loadConversation($conversationId) {
         $stmt = $this->db->prepare("
-            SELECT role, content 
+            SELECT role, content, created_at 
             FROM messages 
             WHERE conversation_id = ? 
             ORDER BY created_at ASC
@@ -281,47 +292,70 @@ class SQLiteLogStorage extends LogStorage {
         $stmt->execute([$conversationId]);
         
         $messages = [];
+        $systemMessage = '';
+        $systemTimestamp = null;
+        $userMessages = [];
+        $assistantMessages = [];
+        
         while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
             if ($row['role'] === 'system') {
-                // Prepend system message in the expected format
-                $messages[] = 'System: ' . $row['content'];
-            } else {
-                $messages[] = $row['content'];
+                $systemMessage = 'System: ' . $row['content'];
+                $systemTimestamp = $row['created_at'];
+            } elseif ($row['role'] === 'user') {
+                $userMessages[] = ['content' => $row['content'], 'timestamp' => $row['created_at']];
+            } elseif ($row['role'] === 'assistant') {
+                $assistantMessages[] = ['content' => $row['content'], 'timestamp' => $row['created_at']];
             }
         }
 
-        return empty($messages) ? null : $messages;
-    }
-
-    public function findConversations($limit = 10, $search = null) {
-        $sql = "
-            SELECT DISTINCT c.id
-            FROM conversations c
-        ";
+        // Reconstruct alternating pattern like FileLogStorage but with timestamps
+        $result = [];
         
-        $params = [];
-        if ($search) {
-            $sql .= " 
-                LEFT JOIN messages m ON c.id = m.conversation_id
-                WHERE m.content LIKE ? OR c.system_prompt LIKE ?
-            ";
-            $searchParam = '%' . $search . '%';
-            $params = [$searchParam, $searchParam];
+        // Add system message combined with first user message if exists
+        if ($systemMessage && !empty($userMessages)) {
+            $firstUser = array_shift($userMessages);
+            $result[] = [
+                'content' => $systemMessage . "\n" . $firstUser['content'],
+                'timestamp' => $firstUser['timestamp'],
+                'role' => 'mixed'
+            ];
+        } elseif ($systemMessage) {
+            $result[] = [
+                'content' => $systemMessage,
+                'timestamp' => $systemTimestamp,
+                'role' => 'system'
+            ];
+        } elseif (!empty($userMessages)) {
+            $firstUser = array_shift($userMessages);
+            $result[] = [
+                'content' => $firstUser['content'],
+                'timestamp' => $firstUser['timestamp'],
+                'role' => 'user'
+            ];
         }
         
-        $sql .= " ORDER BY c.updated_at DESC LIMIT ?";
-        $params[] = $limit;
-
-        $stmt = $this->db->prepare($sql);
-        $stmt->execute($params);
-
-        $conversations = [];
-        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-            $conversations[] = $row['id'];
+        // Alternate between remaining user and assistant messages
+        $maxMessages = max(count($userMessages), count($assistantMessages));
+        for ($i = 0; $i < $maxMessages; $i++) {
+            if (isset($assistantMessages[$i])) {
+                $result[] = [
+                    'content' => $assistantMessages[$i]['content'],
+                    'timestamp' => $assistantMessages[$i]['timestamp'],
+                    'role' => 'assistant'
+                ];
+            }
+            if (isset($userMessages[$i])) {
+                $result[] = [
+                    'content' => $userMessages[$i]['content'],
+                    'timestamp' => $userMessages[$i]['timestamp'],
+                    'role' => 'user'
+                ];
+            }
         }
 
-        return $conversations;
+        return empty($result) ? null : $result;
     }
+
 
     public function getConversationMetadata($conversationId) {
         $stmt = $this->db->prepare("
@@ -354,7 +388,8 @@ class SQLiteLogStorage extends LogStorage {
             'timestamp' => $row['created_at'],
             'word_count' => intval($row['word_count'] / 5), // Rough word count estimation
             'answers' => $answers,
-            'file_path' => null // Not applicable for SQLite
+            'file_path' => null, // Not applicable for SQLite
+            'tags' => $row['tags'] ?? ''
         ];
     }
 
@@ -390,6 +425,200 @@ class SQLiteLogStorage extends LogStorage {
     public function close($conversationId = null) {
         // SQLite doesn't need explicit closing for specific conversations
         // The connection will be closed when the object is destroyed
+    }
+
+    private function updateConversationTags($conversationId) {
+        // Get all messages in conversation
+        $stmt = $this->db->prepare("
+            SELECT content, role FROM messages 
+            WHERE conversation_id = ? 
+            ORDER BY created_at ASC
+        ");
+        $stmt->execute([$conversationId]);
+        $messages = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        
+        $tags = $this->detectTags($messages);
+        $tagsString = implode(',', $tags);
+        
+        // Update conversation with tags
+        $updateStmt = $this->db->prepare("
+            UPDATE conversations SET tags = ? WHERE id = ?
+        ");
+        $updateStmt->execute([$tagsString, $conversationId]);
+    }
+    
+    private function detectTags($messages) {
+        $tags = [];
+        $allContent = '';
+        $hasCode = false;
+        
+        foreach ($messages as $msg) {
+            $content = $msg['content'];
+            $allContent .= ' ' . $content;
+            
+            // Check for code blocks
+            if (preg_match('/```/', $content)) {
+                $hasCode = true;
+            }
+            
+            // Check for inline code
+            if (preg_match('/`[^`]+`/', $content)) {
+                $hasCode = true;
+            }
+        }
+        
+        // Tag for code
+        if ($hasCode) {
+            $tags[] = 'code';
+        }
+        
+        // Language detection (simple English vs non-English)
+        if ($this->isEnglishText($allContent)) {
+            $tags[] = 'english';
+        } else {
+            $tags[] = 'non-english';
+        }
+        
+        return $tags;
+    }
+    
+    private function isEnglishText($text) {
+        $text = strtolower($text);
+        
+        // Common English words that appear frequently
+        $englishWords = [
+            'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by',
+            'is', 'are', 'was', 'were', 'be', 'been', 'have', 'has', 'had', 'do', 'does', 'did',
+            'will', 'would', 'could', 'should', 'can', 'may', 'might', 'must',
+            'this', 'that', 'these', 'those', 'a', 'an', 'it', 'he', 'she', 'we', 'they', 'you', 'i',
+            'what', 'when', 'where', 'why', 'how', 'which', 'who', 'whose'
+        ];
+        
+        $wordCount = 0;
+        $englishWordCount = 0;
+        
+        // Split into words and count
+        $words = preg_split('/\s+/', $text);
+        foreach ($words as $word) {
+            $word = preg_replace('/[^a-z]/', '', $word); // Remove non-letters
+            if (strlen($word) > 1) {
+                $wordCount++;
+                if (in_array($word, $englishWords)) {
+                    $englishWordCount++;
+                }
+            }
+        }
+        
+        // If we have enough words and at least 20% are common English words
+        return $wordCount > 10 && ($englishWordCount / $wordCount) > 0.2;
+    }
+    
+    public function findConversations($limit = 10, $search = null, $tag = null) {
+        $sql = "
+            SELECT DISTINCT c.id
+            FROM conversations c
+        ";
+        
+        $params = [];
+        $whereClauses = [];
+        
+        if ($search) {
+            $sql .= " LEFT JOIN messages m ON c.id = m.conversation_id";
+            $whereClauses[] = "(m.content LIKE ? OR c.system_prompt LIKE ?)";
+            $searchParam = '%' . $search . '%';
+            $params[] = $searchParam;
+            $params[] = $searchParam;
+        }
+        
+        if ($tag) {
+            $whereClauses[] = "c.tags LIKE ?";
+            $params[] = '%' . $tag . '%';
+        }
+        
+        if (!empty($whereClauses)) {
+            $sql .= " WHERE " . implode(" AND ", $whereClauses);
+        }
+        
+        $sql .= " ORDER BY c.updated_at DESC LIMIT ?";
+        $params[] = $limit;
+
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute($params);
+
+        $conversations = [];
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+            $conversations[] = $row['id'];
+        }
+
+        return $conversations;
+    }
+    
+    public function getAllTags() {
+        $stmt = $this->db->prepare("
+            SELECT DISTINCT tags FROM conversations 
+            WHERE tags != '' AND tags IS NOT NULL
+        ");
+        $stmt->execute();
+        
+        $allTags = [];
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+            $tags = explode(',', $row['tags']);
+            foreach ($tags as $tag) {
+                $tag = trim($tag);
+                if ($tag && !in_array($tag, $allTags)) {
+                    $allTags[] = $tag;
+                }
+            }
+        }
+        
+        sort($allTags);
+        return $allTags;
+    }
+    
+    public function getConversationTags($conversationId) {
+        $stmt = $this->db->prepare("SELECT tags FROM conversations WHERE id = ?");
+        $stmt->execute([$conversationId]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        if (!$row || !$row['tags']) {
+            return [];
+        }
+        
+        $tags = explode(',', $row['tags']);
+        return array_map('trim', $tags);
+    }
+    
+    public function setConversationTags($conversationId, $tags) {
+        $tagsString = implode(',', array_map('trim', $tags));
+        $stmt = $this->db->prepare("UPDATE conversations SET tags = ? WHERE id = ?");
+        return $stmt->execute([$tagsString, $conversationId]);
+    }
+    
+    public function addTagToConversation($conversationId, $newTag) {
+        $currentTags = $this->getConversationTags($conversationId);
+        $newTag = trim($newTag);
+        
+        if ($newTag && !in_array($newTag, $currentTags)) {
+            $currentTags[] = $newTag;
+            return $this->setConversationTags($conversationId, $currentTags);
+        }
+        
+        return false;
+    }
+    
+    public function removeTagFromConversation($conversationId, $tagToRemove) {
+        $currentTags = $this->getConversationTags($conversationId);
+        $tagToRemove = trim($tagToRemove);
+        
+        $filteredTags = array_filter($currentTags, function($tag) use ($tagToRemove) {
+            return $tag !== $tagToRemove;
+        });
+        
+        if (count($filteredTags) !== count($currentTags)) {
+            return $this->setConversationTags($conversationId, $filteredTags);
+        }
+        
+        return false;
     }
 
     public function __destruct() {
