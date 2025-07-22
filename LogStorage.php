@@ -6,7 +6,7 @@ abstract class LogStorage {
     abstract public function writeUserMessage($conversationId, $message, $createdAt = null);
     abstract public function writeAssistantMessage($conversationId, $message, $createdAt = null);
     abstract public function loadConversation($conversationId);
-    abstract public function findConversations($limit = 10, $search = null);
+    abstract public function findConversations($limit = 10, $search = null, $tag = null, $offset = 0);
     abstract public function getConversationMetadata($conversationId);
     abstract public function copyConversation($sourceId, $targetId);
 }
@@ -80,7 +80,7 @@ class FileLogStorage extends LogStorage {
         return $split;
     }
 
-    public function findConversations($limit = 10, $search = null) {
+    public function findConversations($limit = 10, $search = null, $tag = null, $offset = 0) {
         $historyFiles = [];
         $time = time();
         
@@ -102,7 +102,7 @@ class FileLogStorage extends LogStorage {
         }
         
         krsort($historyFiles);
-        return array_slice(array_keys($historyFiles), 0, $limit);
+        return array_slice(array_keys($historyFiles), $offset, $limit);
     }
 
     public function getConversationMetadata($filePath) {
@@ -513,7 +513,7 @@ class SQLiteLogStorage extends LogStorage {
         return $wordCount > 10 && ($englishWordCount / $wordCount) > 0.2;
     }
     
-    public function findConversations($limit = 10, $search = null, $tag = null) {
+    public function findConversations($limit = 10, $search = null, $tag = null, $offset = 0) {
         $sql = "
             SELECT DISTINCT c.id
             FROM conversations c
@@ -539,8 +539,9 @@ class SQLiteLogStorage extends LogStorage {
             $sql .= " WHERE " . implode(" AND ", $whereClauses);
         }
         
-        $sql .= " ORDER BY c.updated_at DESC LIMIT ?";
+        $sql .= " ORDER BY c.updated_at DESC LIMIT ? OFFSET ?";
         $params[] = $limit;
+        $params[] = $offset;
 
         $stmt = $this->db->prepare($sql);
         $stmt->execute($params);

@@ -13,6 +13,70 @@ $conversationId = $_GET['id'] ?? null;
 $search = $_GET['search'] ?? null;
 $selectedTag = $_GET['tag'] ?? null;
 
+// Handle AJAX request for loading more conversations
+if (isset($_GET['ajax']) && $_GET['ajax'] === 'load_more') {
+    header('Content-Type: application/json');
+
+    $offset = intval($_GET['offset'] ?? 0);
+    $limit = 10;
+    $search = $_GET['search'] ?? null;
+    $selectedTag = $_GET['tag'] ?? null;
+
+    $conversations = $storage->findConversations($limit, $search, $selectedTag, $offset);
+    $html = '';
+
+    foreach ($conversations as $id) {
+        $metadata = $storage->getConversationMetadata($id);
+        if (!$metadata) continue;
+
+        $messages = $storage->loadConversation($id);
+        $firstMessage = '';
+        if ($messages && !empty($messages)) {
+            $firstMsg = $messages[0];
+            if (is_array($firstMsg)) {
+                $firstMessage = $firstMsg['content'];
+            } else {
+                $firstMessage = $firstMsg;
+            }
+            if (strpos($firstMessage, 'System: ') === 0) {
+                $systemEnd = strpos($firstMessage, "\n");
+                if ($systemEnd !== false) {
+                    $firstMessage = substr($firstMessage, $systemEnd + 1);
+                }
+            }
+        }
+        $preview = strlen($firstMessage) > 100 ? substr($firstMessage, 0, 100) . '...' : $firstMessage;
+
+        $html .= '<li class="conversation-item">';
+        $html .= '<h3>Conversation #' . htmlspecialchars($id) . '</h3>';
+        $html .= '<div class="conversation-meta">';
+        $html .= '<span><strong>Model:</strong> ' . htmlspecialchars($metadata['model']) . '</span>';
+        $html .= '<span><strong>Created:</strong> ' . date('M j, Y g:i A', $metadata['timestamp']) . '</span>';
+        $html .= '<span><strong>Answers:</strong> ' . $metadata['answers'] . '</span>';
+        $html .= '<span><strong>Words:</strong> ~' . number_format($metadata['word_count']) . '</span>';
+        $html .= '</div>';
+        $html .= '<p>' . htmlspecialchars($preview) . '</p>';
+
+        if ($metadata['tags']) {
+            $html .= '<div class="tags">';
+            foreach (explode(',', $metadata['tags']) as $tag) {
+                $trimmedTag = trim($tag);
+                $html .= '<a href="?action=list&tag=' . urlencode($trimmedTag) . '" class="tag">' . htmlspecialchars($trimmedTag) . '</a>';
+            }
+            $html .= '</div>';
+        }
+
+        $html .= '<a href="?action=view&id=' . $id . '" class="conversation-link">View Conversation</a>';
+        $html .= '</li>';
+    }
+
+    echo json_encode([
+        'html' => $html,
+        'hasMore' => count($conversations) === $limit
+    ]);
+    exit;
+}
+
 // Handle tag management actions
 if ($_POST['tag_action'] ?? null) {
     $tagAction = $_POST['tag_action'];
@@ -173,7 +237,24 @@ function processInlineFormatting($text) {
     <style>
         body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }
         .container { max-width: 1200px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        .header { border-bottom: 2px solid #eee; padding-bottom: 15px; margin-bottom: 20px; }
+        .header {
+            border-bottom: 2px solid #eee;
+            padding-bottom: 15px;
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .header h1 {
+            margin: 0;
+        }
+        .header h1 a {
+            color: #333;
+            text-decoration: none;
+        }
+        .header h1 a:hover {
+            color: #007cba;
+        }
         .search-form { margin-bottom: 20px; }
         .search-form input { padding: 8px; width: 300px; border: 1px solid #ddd; border-radius: 4px; }
         .search-form button { padding: 8px 15px; background: #007cba; color: white; border: none; border-radius: 4px; cursor: pointer; }
@@ -181,11 +262,32 @@ function processInlineFormatting($text) {
         .conversation-item { margin-bottom: 15px; padding: 15px; border: 1px solid #ddd; border-radius: 6px; background: #fafafa; }
         .conversation-item h3 { margin: 0 0 8px 0; }
         .conversation-item .tags { float: right; }
-        .conversation-meta { color: #666; font-size: 0.9em; margin-bottom: 8px; }
+        .conversation-meta {
+            color: #666;
+            font-size: 0.9em;
+            margin-bottom: 15px;
+            line-height: 1.4;
+        }
+        .conversation-meta span {
+            margin-right: 15px;
+        }
         .tags { margin-top: 8px; }
         .tag { display: inline-block; background: #e0e0e0; color: #333; padding: 2px 6px; border-radius: 3px; font-size: 0.8em; margin-right: 5px; text-decoration: none; }
         .tag:hover { background: #d0d0d0; }
-        .tag-editor { background: #f9f9f9; padding: 15px; border-radius: 6px; margin: 15px 0; border: 1px solid #ddd; }
+        .tag-editor { background: #f9f9f9; padding: 15px; border-radius: 6px; margin: 15px 0; border: 1px solid #ddd; display: none; }
+        .tag-editor.visible { display: block; }
+        .toggle-tags-btn {
+            background: #007cba;
+            color: white;
+            border: none;
+            padding: 4px 6px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9em;
+            margin-bottom: 10px;
+            float: right;
+        }
+        .toggle-tags-btn:hover { background: #005a8b; }
         .tag-editor h4 { margin: 0 0 10px 0; }
         .tag-list { margin: 10px 0; }
         .editable-tag { display: inline-block; background: #e0e0e0; color: #333; padding: 2px 6px; border-radius: 3px; font-size: 0.8em; margin-right: 5px; margin-bottom: 5px; }
@@ -214,14 +316,40 @@ function processInlineFormatting($text) {
         .message-content ul { margin: 10px 0; padding-left: 20px; }
         .message-content li { margin: 5px 0; }
         .back-link { display: inline-block; margin-bottom: 20px; padding: 8px 15px; background: #666; color: white; text-decoration: none; border-radius: 4px; }
-        .nav { margin-bottom: 20px; }
-        .nav a { margin-right: 15px; color: #007cba; text-decoration: none; }
+        .nav { margin: 0; }
+        .nav a { margin-left: 20px; color: #007cba; text-decoration: none; font-weight: 500; }
+        .nav a:hover { text-decoration: underline; }
+
+        /* Loading indicator */
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+            font-style: italic;
+        }
+        .loading.hidden {
+            display: none;
+        }
+
+        /* Bar Chart Styles */
+        .chart-container { margin-bottom: 30px; }
+        .chart-title { margin-bottom: 15px; font-weight: bold; }
+        .chart-wrapper { overflow-x: auto; padding-bottom: 10px; }
+        .chart { display: flex; align-items: flex-end; min-width: 100%; height: 200px; border-bottom: 2px solid #ddd; border-left: 2px solid #ddd; padding: 10px 0 0 10px; }
+        .chart-bar { display: flex; flex-direction: column; align-items: center; margin-right: 8px; min-width: 60px; }
+        .chart-bar-inner { background: linear-gradient(to top, #007cba, #4db8e8); border-radius: 4px 4px 0 0; width: 40px; transition: all 0.3s ease; min-height: 2px; }
+        .chart-bar-inner:hover { background: linear-gradient(to top, #005a8b, #007cba); transform: scaleY(1.05); }
+        .chart-bar-label { font-size: 0.8em; color: #666; margin-top: 8px; text-align: center; word-wrap: break-word; max-width: 60px; }
+        .chart-bar-value { font-size: 0.7em; color: #333; margin-top: 4px; font-weight: bold; }
+        .chart-scrollable { min-width: 600px; }
+        .chart-models .chart-bar { min-width: 80px; }
+        .chart-models .chart-bar-label { max-width: 80px; }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>Chat Viewer</h1>
+            <h1><a href="?action=list">Chat Viewer</a></h1>
             <div class="nav">
                 <a href="?action=list">All Conversations</a>
                 <a href="?action=stats">Statistics</a>
@@ -229,7 +357,26 @@ function processInlineFormatting($text) {
         </div>
 
         <?php if ($action === 'view' && $conversationId): ?>
-            <a href="?action=list" class="back-link">← Back to List</a>
+            <form class="search-form" method="get">
+                <input type="hidden" name="action" value="list">
+                <input type="text" name="search" placeholder="Search conversations..." value="<?= htmlspecialchars($search ?? '') ?>">
+
+                <select name="tag" style="margin-left: 10px; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                    <option value="">All Tags</option>
+                    <?php
+                    $allTags = $storage->getAllTags();
+                    foreach ($allTags as $tag): ?>
+                        <option value="<?= htmlspecialchars($tag) ?>" <?= $selectedTag === $tag ? 'selected' : '' ?>>
+                            <?= htmlspecialchars($tag) ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+
+                <button type="submit">Filter</button>
+                <?php if ($search || $selectedTag): ?>
+                    <a href="?action=list" style="margin-left: 10px;">Clear All</a>
+                <?php endif; ?>
+            </form>
             <?php
             $metadata = $storage->getConversationMetadata($conversationId);
             $messages = $storage->loadConversation($conversationId);
@@ -238,13 +385,26 @@ function processInlineFormatting($text) {
             if ($metadata && $messages): ?>
                 <h2>Conversation #<?= htmlspecialchars($conversationId) ?></h2>
                 <div class="conversation-meta">
-                    Model: <?= htmlspecialchars($metadata['model']) ?> | 
-                    Created: <?= date('Y-m-d H:i:s', $metadata['timestamp']) ?> | 
-                    Messages: <?= count($messages) ?> | 
-                    Answers: <?= $metadata['answers'] ?>
+                    <span><strong>Model:</strong> <?= htmlspecialchars($metadata['model']) ?></span>
+                    <span><strong>Created:</strong> <?= date('M j, Y g:i A', $metadata['timestamp']) ?></span>
+                    <span><strong>Messages:</strong> <?= count($messages) ?></span>
+                    <span><strong>Answers:</strong> <?= $metadata['answers'] ?></span>
+                    <span><strong>Words:</strong> ~<?= number_format($metadata['word_count']) ?></span>
                 </div>
                 
-                <div class="tag-editor">
+                <button class="toggle-tags-btn" onclick="toggleTagEditor()">Manage Tags</button>
+
+                <!-- Display Tags -->
+                <?php if (!empty($conversationTags)): ?>
+                    <div style="margin: 15px 0;">
+                        <strong>Tags:</strong>
+                        <?php foreach ($conversationTags as $tag): ?>
+                            <a href="?action=list&tag=<?= urlencode($tag) ?>" class="tag" style="margin-left: 8px;"><?= htmlspecialchars($tag) ?></a>
+                        <?php endforeach; ?>
+                    </div>
+                <?php endif; ?>
+
+                <div class="tag-editor" id="tag-editor">
                     <h4>Tags</h4>
                     <div class="tag-list">
                         <?php if (empty($conversationTags)): ?>
@@ -295,6 +455,11 @@ function processInlineFormatting($text) {
                     }
                 }
                 
+                function toggleTagEditor() {
+                    var editor = document.getElementById('tag-editor');
+                    editor.classList.toggle('visible');
+                }
+
                 function toggleBulkEdit() {
                     var form = document.getElementById('bulk-edit-form');
                     if (form.style.display === 'none') {
@@ -371,8 +536,15 @@ function processInlineFormatting($text) {
                         </div>
                     <?php endforeach; ?>
                 </div>
+
+                <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee; text-align: center;">
+                    <a href="?action=list" class="back-link">← Back to List</a>
+                </div>
             <?php else: ?>
                 <p>Conversation not found.</p>
+                <div style="margin-top: 30px; text-align: center;">
+                    <a href="?action=list" class="back-link">← Back to List</a>
+                </div>
             <?php endif; ?>
 
         <?php elseif ($action === 'stats'): ?>
@@ -431,76 +603,119 @@ function processInlineFormatting($text) {
                 ORDER BY month DESC
             ")->fetchAll(PDO::FETCH_ASSOC);
             
-            // Recent activity
-            $recentActivity = $db->query("
-                SELECT DATE(created_at, 'unixepoch') as date, COUNT(*) as count 
-                FROM conversations 
-                WHERE created_at > " . (time() - 30*24*3600) . " 
-                GROUP BY date 
-                ORDER BY date DESC 
-                LIMIT 10
-            ")->fetchAll(PDO::FETCH_ASSOC);
             ?>
             
             <h2>Statistics</h2>
             
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 30px;">
-                <div>
-                    <h3>Overview</h3>
-                    <p><strong>Total Conversations:</strong> <?= $totalConversations ?></p>
-                    <p><strong>Total Messages:</strong> <?= $totalMessages ?></p>
-                    <p><strong>Average Messages per Conversation:</strong> <?= $totalConversations > 0 ? round($totalMessages / $totalConversations, 1) : 0 ?></p>
-                </div>
-                
-                <div>
-                    <h3>Models Used</h3>
-                    <?php foreach ($modelStats as $stat): ?>
-                        <p><strong><?= htmlspecialchars($stat['model'] ?: 'Unknown') ?>:</strong> <?= $stat['count'] ?> conversations</p>
-                    <?php endforeach; ?>
+            <div style="margin-bottom: 30px;">
+                <h3>Overview</h3>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 20px;">
+                    <div style="background: #f8f9fa; padding: 15px; border-radius: 6px; text-align: center;">
+                        <div style="font-size: 2em; font-weight: bold; color: #007cba;"><?= $totalConversations ?></div>
+                        <div style="color: #666;">Total Conversations</div>
+                    </div>
+                    <div style="background: #f8f9fa; padding: 15px; border-radius: 6px; text-align: center;">
+                        <div style="font-size: 2em; font-weight: bold; color: #007cba;"><?= $totalMessages ?></div>
+                        <div style="color: #666;">Total Messages</div>
+                    </div>
+                    <div style="background: #f8f9fa; padding: 15px; border-radius: 6px; text-align: center;">
+                        <div style="font-size: 2em; font-weight: bold; color: #007cba;"><?= $totalConversations > 0 ? round($totalMessages / $totalConversations, 1) : 0 ?></div>
+                        <div style="color: #666;">Avg Messages/Conv</div>
+                    </div>
                 </div>
             </div>
             
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 30px;">
-                <div>
-                    <h3>Tags</h3>
+            <!-- Models Chart -->
+            <div class="chart-container">
+                <h3 class="chart-title">Models Used</h3>
+                <div class="chart-wrapper">
+                    <div class="chart chart-models <?= count($modelStats) > 6 ? 'chart-scrollable' : '' ?>">
+                        <?php
+                        $maxCount = max(array_column($modelStats, 'count'));
+                        foreach ($modelStats as $stat):
+                            $height = $maxCount > 0 ? ($stat['count'] / $maxCount) * 150 : 2;
+                        ?>
+                            <div class="chart-bar">
+                                <div class="chart-bar-inner" style="height: <?= $height ?>px;"></div>
+                                <div class="chart-bar-value"><?= $stat['count'] ?></div>
+                                <div class="chart-bar-label"><?= htmlspecialchars($stat['model'] ?: 'Unknown') ?></div>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Day of Week Chart -->
+            <div class="chart-container">
+                <h3 class="chart-title">Day of Week Activity</h3>
+                <div class="chart-wrapper">
+                    <div class="chart">
+                        <?php
+                        $maxCount = max(array_column($dayStats, 'count'));
+                        foreach ($dayStats as $stat):
+                            $height = $maxCount > 0 ? ($stat['count'] / $maxCount) * 150 : 2;
+                        ?>
+                            <div class="chart-bar">
+                                <div class="chart-bar-inner" style="height: <?= $height ?>px;"></div>
+                                <div class="chart-bar-value"><?= $stat['count'] ?></div>
+                                <div class="chart-bar-label"><?= substr($stat['day_name'], 0, 3) ?></div>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Monthly Activity Chart -->
+            <div class="chart-container">
+                <h3 class="chart-title">Monthly Activity (Last 12 Months)</h3>
+                <div class="chart-wrapper">
+                    <div class="chart <?= count($monthStats) > 8 ? 'chart-scrollable' : '' ?>">
+                        <?php
+                        $maxCount = max(array_column($monthStats, 'count'));
+                        foreach (array_reverse($monthStats) as $stat):
+                            $height = $maxCount > 0 ? ($stat['count'] / $maxCount) * 150 : 2;
+                        ?>
+                            <div class="chart-bar">
+                                <div class="chart-bar-inner" style="height: <?= $height ?>px;"></div>
+                                <div class="chart-bar-value"><?= $stat['count'] ?></div>
+                                <div class="chart-bar-label"><?= $stat['month'] ?></div>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                </div>
+            </div>
+            
+            <?php if (!empty($tagStats)): ?>
+            <div style="margin-bottom: 30px;">
+                <h3>Tags</h3>
+                <div style="display: flex; flex-wrap: wrap; gap: 8px;">
                     <?php foreach ($tagStats as $tag => $count): ?>
-                        <p><strong><?= htmlspecialchars($tag) ?>:</strong> <?= $count ?> conversations</p>
-                    <?php endforeach; ?>
-                </div>
-                
-                <div>
-                    <h3>Day of Week Activity</h3>
-                    <?php foreach ($dayStats as $stat): ?>
-                        <p><strong><?= $stat['day_name'] ?>:</strong> <?= $stat['count'] ?> conversations</p>
+                        <span style="background: #e0e0e0; padding: 4px 8px; border-radius: 12px; font-size: 0.9em;">
+                            <strong><?= htmlspecialchars($tag) ?>:</strong> <?= $count ?>
+                        </span>
                     <?php endforeach; ?>
                 </div>
             </div>
-            
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 30px;">
-                <div>
-                    <h3>Hour of Day Activity</h3>
-                    <div style="max-height: 300px; overflow-y: auto;">
-                        <?php foreach ($hourStats as $stat): ?>
-                            <p><strong><?= sprintf('%02d:00', $stat['hour']) ?>:</strong> <?= $stat['count'] ?> conversations</p>
+            <?php endif; ?>
+
+            <!-- Hour of Day Chart -->
+            <div class="chart-container">
+                <h3 class="chart-title">Hour of Day Activity</h3>
+                <div class="chart-wrapper">
+                    <div class="chart chart-scrollable">
+                        <?php
+                        $maxCount = max(array_column($hourStats, 'count'));
+                        foreach ($hourStats as $stat):
+                            $height = $maxCount > 0 ? ($stat['count'] / $maxCount) * 150 : 2;
+                        ?>
+                            <div class="chart-bar">
+                                <div class="chart-bar-inner" style="height: <?= $height ?>px;"></div>
+                                <div class="chart-bar-value"><?= $stat['count'] ?></div>
+                                <div class="chart-bar-label"><?= sprintf('%02d:00', $stat['hour']) ?></div>
+                            </div>
                         <?php endforeach; ?>
                     </div>
                 </div>
-                
-                <div>
-                    <h3>Monthly Activity (Last 12 Months)</h3>
-                    <div style="max-height: 300px; overflow-y: auto;">
-                        <?php foreach ($monthStats as $stat): ?>
-                            <p><strong><?= $stat['month'] ?>:</strong> <?= $stat['count'] ?> conversations</p>
-                        <?php endforeach; ?>
-                    </div>
-                </div>
-            </div>
-            
-            <h3>Recent Activity (Last 30 Days)</h3>
-            <div style="max-height: 300px; overflow-y: auto;">
-                <?php foreach ($recentActivity as $activity): ?>
-                    <p><?= $activity['date'] ?>: <?= $activity['count'] ?> conversations</p>
-                <?php endforeach; ?>
             </div>
 
         <?php else: ?>
@@ -526,7 +741,7 @@ function processInlineFormatting($text) {
             </form>
 
             <?php
-            $conversations = $storage->findConversations(50, $search, $selectedTag);
+            $conversations = $storage->findConversations(5, $search, $selectedTag);
             ?>
             
             <h2>
@@ -539,7 +754,6 @@ function processInlineFormatting($text) {
                 <?php else: ?>
                     Recent Conversations
                 <?php endif; ?>
-                (<?= count($conversations) ?>)
             </h2>
             
             <?php if (empty($conversations)): ?>
@@ -572,10 +786,10 @@ function processInlineFormatting($text) {
                         <li class="conversation-item">
                             <h3>Conversation #<?= $id ?></h3>
                             <div class="conversation-meta">
-                                Model: <?= htmlspecialchars($metadata['model']) ?> | 
-                                Created: <?= date('Y-m-d H:i:s', $metadata['timestamp']) ?> | 
-                                Answers: <?= $metadata['answers'] ?> | 
-                                ~<?= $metadata['word_count'] ?> words
+                                <span><strong>Model:</strong> <?= htmlspecialchars($metadata['model']) ?></span>
+                                <span><strong>Created:</strong> <?= date('M j, Y g:i A', $metadata['timestamp']) ?></span>
+                                <span><strong>Answers:</strong> <?= $metadata['answers'] ?></span>
+                                <span><strong>Words:</strong> ~<?= number_format($metadata['word_count']) ?></span>
                             </div>
                             <p><?= htmlspecialchars($preview) ?></p>
                             <?php if ($metadata['tags']): ?>
@@ -590,6 +804,55 @@ function processInlineFormatting($text) {
                         </li>
                     <?php endforeach; ?>
                 </ul>
+
+                <div id="loading" class="loading hidden">Loading more conversations...</div>
+
+                <script>
+                let loading = false;
+                let hasMore = true;
+                let offset = 5;
+                const search = <?= json_encode($search ?? '') ?>;
+                const selectedTag = <?= json_encode($selectedTag ?? '') ?>;
+
+                function loadMoreConversations() {
+                    if (loading || !hasMore) return;
+
+                    loading = true;
+                    document.getElementById('loading').classList.remove('hidden');
+
+                    const params = new URLSearchParams({
+                        ajax: 'load_more',
+                        offset: offset
+                    });
+
+                    if (search) params.append('search', search);
+                    if (selectedTag) params.append('tag', selectedTag);
+
+                    fetch('?' + params.toString())
+                        .then(response => response.json())
+                        .then(data => {
+                            if (data.html) {
+                                document.querySelector('.conversation-list').insertAdjacentHTML('beforeend', data.html);
+                                offset += 10;
+                            }
+                            hasMore = data.hasMore;
+                            loading = false;
+                            document.getElementById('loading').classList.add('hidden');
+                        })
+                        .catch(error => {
+                            console.error('Error loading conversations:', error);
+                            loading = false;
+                            document.getElementById('loading').classList.add('hidden');
+                        });
+                }
+
+                // Endless scroll listener
+                window.addEventListener('scroll', () => {
+                    if ((window.innerHeight + window.scrollY) >= document.body.offsetHeight - 1000) {
+                        loadMoreConversations();
+                    }
+                });
+                </script>
             <?php endif; ?>
         <?php endif; ?>
     </div>

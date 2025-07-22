@@ -6,7 +6,7 @@ $openai_key = getenv( 'OPENAI_API_KEY', true );
 $anthropic_key = getenv( 'ANTHROPIC_API_KEY', true );
 $ansi = function_exists( 'posix_isatty' ) && posix_isatty( STDOUT );
 
-$options = getopt( 'ds:li:p:vhfm:r:', array( 'help', 'version' ), $initial_input );
+$options = getopt( 'ds:li:p:vhfm:r:w::', array( 'help', 'version', 'webui' ), $initial_input );
 
 if ( ! isset( $options['m'] ) ) {
 	putenv('RES_OPTIONS=retrans:1 retry:1 timeout:1 attempts:1');
@@ -352,6 +352,56 @@ if ( isset( $ollama_models['models'] ) ) {
 	}
 }
 
+// Handle webui option before checking for supported models
+if ( isset( $options['w'] ) || isset( $options['webui'] ) ) {
+	$port = 8381; // default port
+	if ( isset( $options['w'] ) ) {
+		if ( $options['w'] !== false && is_numeric( $options['w'] ) ) {
+			$port = $options['w'];
+		}
+	}
+	$host = '127.0.0.1';
+	$url = "http://{$host}:{$port}";
+
+	echo "Starting web UI on {$url}...", PHP_EOL;
+
+	// Check if port is available
+	$socket = @fsockopen($host, $port, $errno, $errstr, 1);
+	if ($socket) {
+		fclose($socket);
+		echo "Port {$port} is already in use. Trying to open browser anyway...", PHP_EOL;
+		exec("open '{$url}'");
+		exit(0);
+	}
+
+	// Start PHP built-in server in background
+	$command = "php -S {$host}:{$port} -t " . escapeshellarg(__DIR__) . " > /dev/null 2>&1 &";
+	exec($command);
+
+	// Give server time to start
+	sleep(1);
+
+	// Verify server started
+	$socket = @fsockopen($host, $port, $errno, $errstr, 2);
+	if (!$socket) {
+		echo "Failed to start web server on port {$port}: {$errstr}", PHP_EOL;
+		exit(1);
+	}
+	fclose($socket);
+
+	// Open browser
+	exec("open '{$url}'");
+	echo "Web UI started at {$url}", PHP_EOL;
+	echo "Server running in background. Press Ctrl+C to view this message again.", PHP_EOL;
+	echo "To stop the server, find the PHP process: ps aux | grep 'php -S'", PHP_EOL;
+
+	// Keep script running to show the message
+	while (true) {
+		sleep(3600); // Sleep for 1 hour, then repeat message
+		echo "Web UI still running at {$url} (Press Ctrl+C to exit)", PHP_EOL;
+	}
+}
+
 if ( empty( $supported_models ) ) {
 	echo 'No supported models found.', PHP_EOL, PHP_EOL;
 	echo 'If you want to use ChatGPT, please set your OpenAI API key in the OPENAI_API_KEY environment variable:', PHP_EOL;
@@ -397,7 +447,7 @@ if ( isset( $options['h'] ) || isset( $options['help'] ) ) {
 	$offline = ! $online ? "(we're offline)" : '';
 	$self = basename( $_SERVER['argv'][0] );
 	echo <<<USAGE
-Usage: $self [-l] [-f] [-r [number|searchterm]] [-m model] [-s system_prompt] [-i input_file_s] [-p picture_file] [conversation_input]
+Usage: $self [-l] [-f] [-r [number|searchterm]] [-m model] [-s system_prompt] [-i input_file_s] [-p picture_file] [-w port|--webui] [conversation_input]
 
 Options:
   -l                 Resume last conversation.
@@ -409,6 +459,7 @@ Options:
   -i input_file(s)   Read these files and add them to the prompt.
   -p picture_file    Add an picture as input (only gpt-4o).
   -s system_prompt   Specify a system prompt preceeding the conversation.
+  -w port|--webui    Launch web UI on specified port (default: 8080) and open browser.
 
 Arguments:
   conversation_input  Input for the first conversation.
@@ -435,6 +486,12 @@ Example usage:
 
   $self Tell me a joke
     Starts a new conversation with the given message.
+
+  $self -w 8080
+    Launch web UI on port 8080 and open browser.
+
+  $self --webui
+    Launch web UI on default port 8080 and open browser.
 
   $self -m gpt-3.5-turbo-16k
     Use a ChatGPT model with 16k tokens instead of 4k.
