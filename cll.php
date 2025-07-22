@@ -2,7 +2,6 @@
 $version = '1.1.2';
 $openai_key = getenv( 'OPENAI_API_KEY', true );
 $anthropic_key = getenv( 'ANTHROPIC_API_KEY', true );
-$supported_models = array();
 $ansi = function_exists( 'posix_isatty' ) && posix_isatty( STDOUT );
 
 $options = getopt( 'ds:li:p:vhfm:r:', array( 'help', 'version' ), $initial_input );
@@ -270,35 +269,62 @@ $history_directory = $history_base_directory . date( 'Y/m', $time );
 
 $system = false;
 
-if ( $online && ! empty( $openai_key ) ) {
-	// curl_setopt( $ch, CURLOPT_URL, 'https://api.openai.com/v1/models' );
-	// curl_setopt(
-	// 	$ch,
-	// 	CURLOPT_HTTPHEADER,
-	// 	array(
-	// 		'Content-Type: application/json',
-	// 		'Authorization: Bearer ' . $openai_key,
-	// 	)
-	// );
-
-	// $response = curl_exec($ch);
-	// $data = json_decode($response, true);
-
-	// foreach ($data['data'] as $model) {
-	// 	if ( false !== strpos( $model['id'], 'gpt' ) ) {
-	//     $supported_models[ $model['id'] ]  = 'OpenAI';
-	// 	}
-	// }
-
-	$supported_models['gpt-3.5-turbo'] = 'OpenAI';
-	$supported_models['gpt-3.5-turbo-16k'] = 'OpenAI';
-	$supported_models['gpt-4o-mini'] = 'OpenAI';
-	$supported_models['gpt-4o'] = 'OpenAI';
+$supported_models = array();
+$supported_models_file = __DIR__ . '/supported_models.json';
+if ( file_exists( $supported_models_file ) ) {
+	$supported_models = json_decode( file_get_contents( $supported_models_file ), true );
+	if ( ! is_array( $supported_models ) ) {
+		$supported_models = array();
+	}
+} else {
+	// Update the models.
+	$options['m'] = '';
 }
 
-if ( $online && ! empty( $anthropic_key ) ) {
-	$supported_models['claude-3-5-sonnet-20240620'] = 'Anthropic';
-	$supported_models['claude-3-haiku-20240307'] = 'Anthropic';
+if ( $online && isset( $options['m'] ) && $options['m'] == '' ) {
+	// Update models.
+	if ( ! empty( $openai_key ) ) {
+		curl_setopt( $ch, CURLOPT_URL, 'https://api.openai.com/v1/models' );
+		curl_setopt(
+			$ch,
+			CURLOPT_HTTPHEADER,
+			array(
+				'Content-Type: application/json',
+				'Authorization: Bearer ' . $openai_key,
+			)
+		);
+
+		$response = curl_exec($ch);
+		$data = json_decode($response, true);
+
+		foreach ($data['data'] as $model) {
+			if ( 0 === strpos( $model['id'], 'gpt' ) ) {
+				$supported_models[ $model['id'] ]  = 'OpenAI';
+			}
+		}
+	}
+	if ( ! empty( $anthropic_key ) ) {
+		curl_setopt( $ch, CURLOPT_URL, 'https://api.anthropic.com/v1/models' );
+		curl_setopt(
+			$ch,
+			CURLOPT_HTTPHEADER,
+			array(
+				'x-api-key: ' . $anthropic_key,
+				'anthropic-version: 2023-06-01',
+				'Content-Type: application/json',
+			)
+		);
+		$response = curl_exec($ch);
+		$data = json_decode($response, true);
+
+		foreach ( $data['data'] as $model ) {
+			if ( $model['type'] === 'model' && 0 === strpos( $model['id'], 'claude' ) ) {
+				$supported_models[ $model['id'] ] = 'Anthropic';
+			}
+		}
+	}
+
+	file_put_contents( $supported_models_file, json_encode( $supported_models, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ) );
 }
 
 curl_setopt( $ch, CURLOPT_URL, 'http://localhost:11434/api/tags' );
