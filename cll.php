@@ -1,4 +1,6 @@
 <?php
+require_once __DIR__ . '/LogStorage.php';
+
 $version = '1.1.2';
 $openai_key = getenv( 'OPENAI_API_KEY', true );
 $anthropic_key = getenv( 'ANTHROPIC_API_KEY', true );
@@ -258,13 +260,16 @@ readline_completion_function("dont_auto_complete");
 
 $readline_history_file = __DIR__ . '/.history';
 $history_base_directory = __DIR__ . '/chats/';
-if ( ! file_exists( $history_base_directory ) ) {
-	if ( ! mkdir( $history_base_directory ) ) {
-		echo 'Could not create history directory: ', $history_base_directory, PHP_EOL;
-		exit( 1 );
-	}
-}
 $time = time();
+
+// Initialize log storage
+try {
+	$logStorage = new FileLogStorage($history_base_directory);
+} catch (Exception $e) {
+	echo 'Error initializing log storage: ', $e->getMessage(), PHP_EOL;
+	exit(1);
+}
+
 $history_directory = $history_base_directory . date( 'Y/m', $time );
 
 $system = false;
@@ -443,8 +448,6 @@ if ( $stat['size'] > 0 ) {
 }
 fclose( $fp_stdin );
 
-$fp = false;
-
 if ( isset( $options['m'] ) ) {
 	$model = false;
 	if ( isset( $supported_models[$options['m']] ) ) {
@@ -481,6 +484,7 @@ if ( $ansi || isset( $options['v'] ) ) {
 	fprintf( STDERR, 'Model: ' . $model . ' via ' . $model_provider . ( isset( $options['v'] ) ? ' (verbose)' : '' ) . PHP_EOL );
 }
 
+$conversation_id = $time;
 $full_history_file = $history_directory . '/history.' . $time . '.' . preg_replace( '/[^a-z0-9]+/', '-', $model ) . '.txt';
 
 if ( isset( $options['l'] ) ) {
@@ -501,21 +505,11 @@ if ( isset( $options['r'] ) ) {
 	if ( $options['r'] <= 0 ) {
 		$options['r'] = 10;
 	}
+	$history_files_list = $logStorage->findConversations($options['r'] * 10, $search);
 	$history_files = array();
-	for ( $i = 0; $i > -300; $i -= 20 ) {
-		$more_history_files = array_flip( glob( $history_base_directory . date( 'Y/m', $time - $i ) . '/history.*' ) );
-		if ( $search ) {
-			$more_history_files = array_filter( $more_history_files, function( $file ) use ( $search ) {
-				$file_contents = file_get_contents( $file );
-				return false !== stripos( $file_contents, $search );
-			}, ARRAY_FILTER_USE_KEY );
-		}
-		$history_files = array_merge( $history_files, $more_history_files );
-		if ( count( $history_files ) >= $options['r'] ) {
-			break;
-		}
+	foreach ($history_files_list as $file) {
+		$history_files[$file] = null; // Will be loaded later
 	}
-	krsort( $history_files );
 
 	$length = $options['r'];
 	if ( isset( $options['l'] ) ) {
@@ -544,8 +538,14 @@ if ( isset( $options['r'] ) ) {
 		if ( !empty( $last_history_files ) ) {
 			$length = 10;
 			foreach ( $last_history_files as $k => $last_history_file ) {
-				$filename_parts = explode( '.', $last_history_file );
-				$used_model = $filename_parts[2];
+				$metadata = $logStorage->getConversationMetadata($last_history_file);
+				if (!$metadata) {
+					unset( $history_files[ $last_history_file ] );
+					unset( $last_history_files[ $k ] );
+					continue;
+				}
+
+				$used_model = $metadata['model'];
 				if ( 'txt' === $used_model ) {
 					$used_model = '';
 				} else {
@@ -555,8 +555,9 @@ if ( isset( $options['r'] ) ) {
 					}
 					$used_model .= ', ';
 				}
+				
 				$ago = '';
-				$unix_timestamp = $filename_parts[1];
+				$unix_timestamp = $metadata['timestamp'];
 				if ( is_numeric( $unix_timestamp ) ) {
 					$ago_in_seconds = $time - $unix_timestamp;
 					if ( $ago_in_seconds > 60 * 60 * 24 ) {
@@ -569,26 +570,16 @@ if ( isset( $options['r'] ) ) {
 						$ago = $ago_in_seconds . 's ago, ';
 					}
 				}
-				$conversation_contents = file_get_contents( $last_history_file );
-				$split = preg_split( '/^>(?: ([^\n]*)|>> (.*)\n\.)\n\n/ms', trim( $conversation_contents ), -1, PREG_SPLIT_DELIM_CAPTURE );
-				$split = array_filter( $split );
-				$split = array_values( $split );
 
-				if ( count( $split ) < 2 ) {
-					// echo 'Empty history file: ', $last_history_file, PHP_EOL;
+				$split = $logStorage->loadConversation($last_history_file);
+				if (!$split || count($split) < 2) {
 					unset( $history_files[ $last_history_file ] );
 					unset( $last_history_files[ $k ] );
 					continue;
 				}
-				$s = array_shift( $split );
-				if ( substr( $s, 0, 7 ) === 'System:' ) {
-					$split[0] = $s . $split[0];
-				} else {
-					array_unshift( $split, $s );
-				}
 
 				$history_files[ $last_history_file ] = $split;
-				$answers = intval( count( $history_files[ $last_history_file ] ) / 2 );
+				$answers = $metadata['answers'];
 
 				$c = $c + 1;
 
@@ -607,7 +598,7 @@ if ( isset( $options['r'] ) ) {
 						echo ' (';
 					}
 				}
-				echo $ago, $used_model, $answers, ' answer', $answers === 1 ? '' : 's', ', ', str_word_count( $conversation_contents ), ' words';
+				echo $ago, $used_model, $answers, ' answer', $answers === 1 ? '' : 's', ', ', $metadata['word_count'], ' words';
 				if ( ! $ansi ) {
 					echo ')';
 				}
@@ -840,21 +831,25 @@ while ( true ) {
 	}
 
 	readline_add_history( $input );
-	if ( ! $fp ) {
+	static $conversation_initialized = false;
+	if ( ! $conversation_initialized ) {
 		if ( ! file_exists( $history_directory ) ) {
 			mkdir( $history_directory, 0777, true );
 		}
 
 		if ( $sel && $last_conversations && isset( $last_conversations[ $sel ] ) ) {
-			copy( $last_conversations[ $sel ], $full_history_file );
+			$source_conversation_id = basename($last_conversations[ $sel ], '.txt');
+			$source_conversation_id = preg_replace('/^history\.(\d+)\..*$/', '$1', $source_conversation_id);
+			$logStorage->copyConversation($source_conversation_id, $conversation_id);
 
 			if ( $system ) {
-				file_put_contents( $full_history_file, 'System: ' . $system  . PHP_EOL . trim( preg_replace( '/^System: .*$/m', '', file_get_contents( $full_history_file ) ) ) );
+				$logStorage->writeSystemPrompt($conversation_id, $system);
 				$system = false;
 			}
 		}
 
-		$fp = fopen( $full_history_file, 'a' );
+		$logStorage->initializeConversation($conversation_id, $model);
+		$conversation_initialized = true;
 	}
 
 	if ( isset( $options['i'] ) ) {
@@ -980,14 +975,10 @@ while ( true ) {
 		// Persist history unless prepended by whitespace.
 		readline_write_history( $readline_history_file );
 		if ( $system ) {
-			fwrite( $fp, 'System: ' . $system . PHP_EOL );
+			$logStorage->writeSystemPrompt($conversation_id, $system);
 			$system = false;
 		}
-		if ( false === strpos( $input, PHP_EOL ) ) {
-			fwrite( $fp, '> ' . $input . PHP_EOL . PHP_EOL );
-		} else {
-			fwrite( $fp, '>>> ' . $input . PHP_EOL . '.' . PHP_EOL . PHP_EOL );
-		}
+		$logStorage->writeUserMessage($conversation_id, $input);
 	}
 
 	$image = false;
@@ -1095,7 +1086,7 @@ while ( true ) {
 	}
 	if ( $stdin || ltrim( $input ) === $input ) {
 		// Persist history unless prepended by whitespace or coming from stdin.
-		fwrite( $fp, $message . PHP_EOL . PHP_EOL );
+		$logStorage->writeAssistantMessage($conversation_id, $message);
 	}
 
 	if ( isset( $options['v'] ) ) {
@@ -1118,6 +1109,4 @@ while ( true ) {
 		break;
 	}
 }
-if ( $fp ) {
-	fclose( $fp );
-}
+$logStorage->close();
