@@ -26,48 +26,7 @@ if (isset($_GET['ajax']) && $_GET['ajax'] === 'load_more') {
     $html = '';
 
     foreach ($conversations as $id) {
-        $metadata = $storage->getConversationMetadata($id);
-        if (!$metadata) continue;
-
-        $messages = $storage->loadConversation($id);
-        $firstMessage = '';
-        if ($messages && !empty($messages)) {
-            $firstMsg = $messages[0];
-            if (is_array($firstMsg)) {
-                $firstMessage = $firstMsg['content'];
-            } else {
-                $firstMessage = $firstMsg;
-            }
-            if (strpos($firstMessage, 'System: ') === 0) {
-                $systemEnd = strpos($firstMessage, "\n");
-                if ($systemEnd !== false) {
-                    $firstMessage = substr($firstMessage, $systemEnd + 1);
-                }
-            }
-        }
-        $preview = strlen($firstMessage) > 100 ? substr($firstMessage, 0, 100) . '...' : $firstMessage;
-
-        $html .= '<li class="conversation-item">';
-        $html .= '<h3>Conversation #' . htmlspecialchars($id) . '</h3>';
-        $html .= '<div class="conversation-meta">';
-        $html .= '<span><strong>Model:</strong> ' . htmlspecialchars($metadata['model']) . '</span>';
-        $html .= '<span><strong>Created:</strong> ' . date('M j, Y g:i A', $metadata['timestamp']) . '</span>';
-        $html .= '<span><strong>Answers:</strong> ' . $metadata['answers'] . '</span>';
-        $html .= '<span><strong>Words:</strong> ~' . number_format($metadata['word_count']) . '</span>';
-        $html .= '</div>';
-        $html .= '<p>' . htmlspecialchars($preview) . '</p>';
-
-        if ($metadata['tags']) {
-            $html .= '<div class="tags">';
-            foreach (explode(',', $metadata['tags']) as $tag) {
-                $trimmedTag = trim($tag);
-                $html .= '<a href="?action=list&tag=' . urlencode($trimmedTag) . '" class="tag">' . htmlspecialchars($trimmedTag) . '</a>';
-            }
-            $html .= '</div>';
-        }
-
-        $html .= '<a href="?action=view&id=' . $id . '" class="conversation-link">View Conversation</a>';
-        $html .= '</li>';
+        $html .= renderConversationItem($storage, $id);
     }
 
     echo json_encode([
@@ -108,6 +67,69 @@ if ($_POST['tag_action'] ?? null) {
         header("Location: ?action=view&id=" . urlencode($targetConversationId));
         exit;
     }
+}
+
+// Handle delete conversation action
+if ($_POST['delete_action'] ?? null) {
+    $deleteAction = $_POST['delete_action'];
+    $targetConversationId = $_POST['conversation_id'] ?? null;
+
+    if ($deleteAction === 'delete' && $targetConversationId) {
+        if ($storage->deleteConversation($targetConversationId)) {
+            // Redirect to conversation list
+            header("Location: ?action=list");
+            exit;
+        } else {
+            $deleteError = "Failed to delete conversation.";
+        }
+    }
+}
+
+function renderConversationItem($storage, $id) {
+    $metadata = $storage->getConversationMetadata($id);
+    if (!$metadata) return '';
+
+    $messages = $storage->loadConversation($id);
+    $firstMessage = '';
+    if ($messages && !empty($messages)) {
+        $firstMsg = $messages[0];
+        if (is_array($firstMsg)) {
+            $firstMessage = $firstMsg['content'];
+        } else {
+            $firstMessage = $firstMsg;
+        }
+        if (strpos($firstMessage, 'System: ') === 0) {
+            $systemEnd = strpos($firstMessage, "\n");
+            if ($systemEnd !== false) {
+                $firstMessage = substr($firstMessage, $systemEnd + 1);
+            }
+        }
+    }
+    $preview = strlen($firstMessage) > 100 ? substr($firstMessage, 0, 100) . '...' : $firstMessage;
+
+    $html = '<li class="conversation-item">';
+    $html .= '<h3><a href="?action=view&id=' . $id . '" style="text-decoration: none; color: inherit;">Conversation #' . htmlspecialchars($id) . '</a></h3>';
+    $html .= '<div class="conversation-meta">';
+    $html .= '<span><strong>Model:</strong> ' . htmlspecialchars($metadata['model']) . '</span>';
+    $html .= '<span><strong>Created:</strong> ' . date('M j, Y g:i A', $metadata['timestamp']) . '</span>';
+    $html .= '<span><strong>Answers:</strong> ' . $metadata['answers'] . '</span>';
+    $html .= '<span><strong>Words:</strong> ~' . number_format($metadata['word_count']) . '</span>';
+    $html .= '</div>';
+    $html .= '<p>' . htmlspecialchars($preview) . '</p>';
+
+    if ($metadata['tags']) {
+        $html .= '<div class="tags">';
+        foreach (explode(',', $metadata['tags']) as $tag) {
+            $trimmedTag = trim($tag);
+            $html .= '<a href="?action=list&tag=' . urlencode($trimmedTag) . '" class="tag">' . htmlspecialchars($trimmedTag) . '</a>';
+        }
+        $html .= '</div>';
+    }
+
+    $html .= '<a href="?action=view&id=' . $id . '" class="conversation-link">View Conversation</a>';
+    $html .= '</li>';
+
+    return $html;
 }
 
 function renderMarkdown($text) {
@@ -288,6 +310,18 @@ function processInlineFormatting($text) {
             float: right;
         }
         .toggle-tags-btn:hover { background: #005a8b; }
+        .delete-btn {
+            color: white;
+            border: none;
+            padding: 4px 6px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9em;
+            margin-bottom: 10px;
+            margin-right: .5em;
+            float: right;
+        }
+        .delete-btn:hover { background: #c82333; }
         .tag-editor h4 { margin: 0 0 10px 0; }
         .tag-list { margin: 10px 0; }
         .editable-tag { display: inline-block; background: #e0e0e0; color: #333; padding: 2px 6px; border-radius: 3px; font-size: 0.8em; margin-right: 5px; margin-bottom: 5px; }
@@ -335,15 +369,45 @@ function processInlineFormatting($text) {
         .chart-container { margin-bottom: 30px; }
         .chart-title { margin-bottom: 15px; font-weight: bold; }
         .chart-wrapper { overflow-x: auto; padding-bottom: 10px; }
-        .chart { display: flex; align-items: flex-end; min-width: 100%; height: 200px; border-bottom: 2px solid #ddd; border-left: 2px solid #ddd; padding: 10px 0 0 10px; }
+        .chart { display: flex; align-items: flex-end; min-width: 100%; height: 220px; border-bottom: 2px solid #ddd; border-left: 2px solid #ddd; padding: 10px 0 0 10px; }
         .chart-bar { display: flex; flex-direction: column; align-items: center; margin-right: 8px; min-width: 60px; }
         .chart-bar-inner { background: linear-gradient(to top, #007cba, #4db8e8); border-radius: 4px 4px 0 0; width: 40px; transition: all 0.3s ease; min-height: 2px; }
         .chart-bar-inner:hover { background: linear-gradient(to top, #005a8b, #007cba); transform: scaleY(1.05); }
-        .chart-bar-label { font-size: 0.8em; color: #666; margin-top: 8px; text-align: center; word-wrap: break-word; max-width: 60px; }
+        .chart-bar-label { font-size: 0.8em; color: #666; margin-top: 8px; text-align: center; word-wrap: break-word; max-width: 60px; overflow: hidden; text-overflow: clip; height: 30px; margin-bottom: 10px; }
         .chart-bar-value { font-size: 0.7em; color: #333; margin-top: 4px; font-weight: bold; }
         .chart-scrollable { min-width: 600px; }
         .chart-models .chart-bar { min-width: 80px; }
         .chart-models .chart-bar-label { max-width: 80px; }
+
+        /* Tag Cloud Styles */
+        .tag-cloud {
+            text-align: center;
+            line-height: 1.8;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+        .tag-cloud-item {
+            display: inline-block;
+            margin: 5px 8px;
+            padding: 4px 8px;
+            border-radius: 12px;
+            background: #007cba;
+            color: white;
+            text-decoration: none;
+            transition: all 0.3s ease;
+            font-weight: 500;
+        }
+        .tag-cloud-item:hover {
+            background: #005a8b;
+            transform: scale(1.1);
+        }
+        .tag-cloud-size-1 { font-size: 0.8em; opacity: 0.7; }
+        .tag-cloud-size-2 { font-size: 0.9em; opacity: 0.8; }
+        .tag-cloud-size-3 { font-size: 1.0em; opacity: 0.9; }
+        .tag-cloud-size-4 { font-size: 1.2em; opacity: 1.0; }
+        .tag-cloud-size-5 { font-size: 1.4em; opacity: 1.0; font-weight: 600; }
+        .tag-cloud-size-6 { font-size: 1.6em; opacity: 1.0; font-weight: 700; }
     </style>
 </head>
 <body>
@@ -383,6 +447,11 @@ function processInlineFormatting($text) {
             $conversationTags = $storage->getConversationTags($conversationId);
             
             if ($metadata && $messages): ?>
+                <?php if (isset($deleteError)): ?>
+                    <div style="background: #f8d7da; color: #721c24; padding: 10px; border: 1px solid #f5c6cb; border-radius: 4px; margin-bottom: 15px;">
+                        <?= htmlspecialchars($deleteError) ?>
+                    </div>
+                <?php endif; ?>
                 <h2>Conversation #<?= htmlspecialchars($conversationId) ?></h2>
                 <div class="conversation-meta">
                     <span><strong>Model:</strong> <?= htmlspecialchars($metadata['model']) ?></span>
@@ -393,6 +462,7 @@ function processInlineFormatting($text) {
                 </div>
                 
                 <button class="toggle-tags-btn" onclick="toggleTagEditor()">Manage Tags</button>
+                <button class="delete-btn" onclick="confirmDelete()" style="background: #dc3545; margin-left: 10px;">Delete Conversation</button>
 
                 <!-- Display Tags -->
                 <?php if (!empty($conversationTags)): ?>
@@ -447,6 +517,12 @@ function processInlineFormatting($text) {
                     <input type="hidden" name="tag_to_remove" id="tag_to_remove_input">
                 </form>
                 
+                <!-- Hidden form for deleting conversation -->
+                <form id="delete-form" method="post" style="display: none;">
+                    <input type="hidden" name="delete_action" value="delete">
+                    <input type="hidden" name="conversation_id" value="<?= htmlspecialchars($conversationId) ?>">
+                </form>
+
                 <script>
                 function removeTag(tag) {
                     if (confirm('Remove tag "' + tag + '"?')) {
@@ -466,6 +542,12 @@ function processInlineFormatting($text) {
                         form.style.display = 'block';
                     } else {
                         form.style.display = 'none';
+                    }
+                }
+
+                function confirmDelete() {
+                    if (confirm('Are you sure you want to delete this conversation? This action cannot be undone.')) {
+                        document.getElementById('delete-form').submit();
                     }
                 }
                 </script>
@@ -537,9 +619,46 @@ function processInlineFormatting($text) {
                     <?php endforeach; ?>
                 </div>
 
-                <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee; text-align: center;">
-                    <a href="?action=list" class="back-link">← Back to List</a>
+                <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee;">
+                    <div style="margin-bottom: 15px; padding: 10px; background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 4px;">
+                        <strong>Resume this conversation:</strong>
+                        <code id="resume-command" style="display: inline-block; margin-left: 10px; padding: 4px 8px; background: #ffffff; border: 1px solid #ddd; border-radius: 3px; cursor: pointer; user-select: all;" onclick="copyResumeCommand()"><?= 'cll -r ' . htmlspecialchars($conversationId) ?></code>
+                        <span id="copy-feedback" style="margin-left: 8px; color: #28a745; font-size: 0.9em; display: none;">Copied!</span>
+                    </div>
+                    <div style="text-align: center;">
+                        <a href="?action=list" class="back-link">← Back to List</a>
+                    </div>
                 </div>
+
+                <script>
+                function copyResumeCommand() {
+                    const command = document.getElementById('resume-command').textContent;
+                    navigator.clipboard.writeText(command).then(function() {
+                        const feedback = document.getElementById('copy-feedback');
+                        feedback.style.display = 'inline';
+                        setTimeout(() => {
+                            feedback.style.display = 'none';
+                        }, 2000);
+                    }).catch(function(err) {
+                        // Fallback for older browsers
+                        const textArea = document.createElement('textarea');
+                        textArea.value = command;
+                        document.body.appendChild(textArea);
+                        textArea.select();
+                        try {
+                            document.execCommand('copy');
+                            const feedback = document.getElementById('copy-feedback');
+                            feedback.style.display = 'inline';
+                            setTimeout(() => {
+                                feedback.style.display = 'none';
+                            }, 2000);
+                        } catch (err) {
+                            console.error('Could not copy text: ', err);
+                        }
+                        document.body.removeChild(textArea);
+                    });
+                }
+                </script>
             <?php else: ?>
                 <p>Conversation not found.</p>
                 <div style="margin-top: 30px; text-align: center;">
@@ -688,11 +807,20 @@ function processInlineFormatting($text) {
             <?php if (!empty($tagStats)): ?>
             <div style="margin-bottom: 30px;">
                 <h3>Tags</h3>
-                <div style="display: flex; flex-wrap: wrap; gap: 8px;">
-                    <?php foreach ($tagStats as $tag => $count): ?>
-                        <span style="background: #e0e0e0; padding: 4px 8px; border-radius: 12px; font-size: 0.9em;">
-                            <strong><?= htmlspecialchars($tag) ?>:</strong> <?= $count ?>
-                        </span>
+                <div class="tag-cloud">
+                    <?php 
+                    $maxCount = max(array_values($tagStats));
+                    $minCount = min(array_values($tagStats));
+                    $range = max($maxCount - $minCount, 1);
+                    
+                    foreach ($tagStats as $tag => $count): 
+                        // Calculate size class (1-6) based on count
+                        $normalized = ($count - $minCount) / $range;
+                        $sizeClass = max(1, min(6, ceil($normalized * 5) + 1));
+                    ?>
+                        <a href="?action=list&tag=<?= urlencode($tag) ?>" class="tag-cloud-item tag-cloud-size-<?= $sizeClass ?>" title="<?= $count ?> conversations">
+                            <?= htmlspecialchars($tag) ?>
+                        </a>
                     <?php endforeach; ?>
                 </div>
             </div>
@@ -760,48 +888,8 @@ function processInlineFormatting($text) {
                 <p>No conversations found.</p>
             <?php else: ?>
                 <ul class="conversation-list">
-                    <?php foreach ($conversations as $id): 
-                        $metadata = $storage->getConversationMetadata($id);
-                        if (!$metadata) continue;
-                        
-                        $messages = $storage->loadConversation($id);
-                        $firstMessage = '';
-                        if ($messages && !empty($messages)) {
-                            $firstMsg = $messages[0];
-                            if (is_array($firstMsg)) {
-                                $firstMessage = $firstMsg['content'];
-                            } else {
-                                $firstMessage = $firstMsg;
-                            }
-                            // If first message contains system prompt, extract the user part
-                            if (strpos($firstMessage, 'System: ') === 0) {
-                                $systemEnd = strpos($firstMessage, "\n");
-                                if ($systemEnd !== false) {
-                                    $firstMessage = substr($firstMessage, $systemEnd + 1);
-                                }
-                            }
-                        }
-                        $preview = strlen($firstMessage) > 100 ? substr($firstMessage, 0, 100) . '...' : $firstMessage;
-                    ?>
-                        <li class="conversation-item">
-                            <h3>Conversation #<?= $id ?></h3>
-                            <div class="conversation-meta">
-                                <span><strong>Model:</strong> <?= htmlspecialchars($metadata['model']) ?></span>
-                                <span><strong>Created:</strong> <?= date('M j, Y g:i A', $metadata['timestamp']) ?></span>
-                                <span><strong>Answers:</strong> <?= $metadata['answers'] ?></span>
-                                <span><strong>Words:</strong> ~<?= number_format($metadata['word_count']) ?></span>
-                            </div>
-                            <p><?= htmlspecialchars($preview) ?></p>
-                            <?php if ($metadata['tags']): ?>
-                                <div class="tags">
-                                    <?php foreach (explode(',', $metadata['tags']) as $tag): 
-                                        $trimmedTag = trim($tag); ?>
-                                        <a href="?action=list&tag=<?= urlencode($trimmedTag) ?>" class="tag"><?= htmlspecialchars($trimmedTag) ?></a>
-                                    <?php endforeach; ?>
-                                </div>
-                            <?php endif; ?>
-                            <a href="?action=view&id=<?= $id ?>" class="conversation-link">View Conversation</a>
-                        </li>
+                    <?php foreach ($conversations as $id): ?>
+                        <?= renderConversationItem($storage, $id) ?>
                     <?php endforeach; ?>
                 </ul>
 

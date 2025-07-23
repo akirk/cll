@@ -456,9 +456,14 @@ class SQLiteLogStorage extends LogStorage {
             $content = $msg['content'];
             $allContent .= ' ' . $content;
             
-            // Check for code blocks
-            if (preg_match('/```/', $content)) {
+            // Check for code blocks and extract languages
+            if (preg_match_all('/```(\w+)?/i', $content, $matches)) {
                 $hasCode = true;
+                foreach ($matches[1] as $lang) {
+                    if ($lang && strlen($lang) > 0) {
+                        $tags[] = strtolower($lang);
+                    }
+                }
             }
             
             // Check for inline code
@@ -467,19 +472,69 @@ class SQLiteLogStorage extends LogStorage {
             }
         }
         
+        $allContentLower = strtolower($allContent);
+
+        // Programming languages (keyword-based detection)
+        $languages = [
+            'javascript' => ['javascript', 'js', 'node.js', 'react', 'vue', 'angular', 'jquery', 'npm'],
+            'php' => ['<?php', 'php', 'laravel', 'wordpress', 'composer'],
+            'python' => ['python', 'pip', 'django', 'flask', 'pandas', 'numpy'],
+            'java' => ['java', 'spring', 'maven', 'gradle'],
+            'css' => ['css', 'stylesheet', 'bootstrap', 'sass', 'scss'],
+            'html' => ['html', '<div>', '<span>', '<html>', 'dom'],
+            'sql' => ['select ', 'insert ', 'update ', 'delete ', 'mysql', 'postgres'],
+            'bash' => ['bash', 'shell', 'command', 'terminal', '#!/bin'],
+            'git' => ['git ', 'github', 'commit', 'branch', 'merge', 'pull request']
+        ];
+
+        foreach ($languages as $lang => $keywords) {
+            foreach ($keywords as $keyword) {
+                if (strpos($allContentLower, $keyword) !== false) {
+                    $tags[] = $lang;
+                    break;
+                }
+            }
+        }
+
+        // File types
+        $fileTypes = ['.js', '.php', '.py', '.java', '.css', '.html', '.sql', '.json', '.xml', '.csv'];
+        foreach ($fileTypes as $ext) {
+            if (strpos($allContentLower, $ext) !== false) {
+                $tags[] = 'files';
+                break;
+            }
+        }
+
+        // Content types
+        if (preg_match('/\b(error|exception|bug|fix|debug|troubleshoot)\b/i', $allContent)) {
+            $tags[] = 'debugging';
+        }
+
+        if (preg_match('/\b(optimize|performance|speed|slow|faster)\b/i', $allContent)) {
+            $tags[] = 'performance';
+        }
+
+        if (preg_match('/\b(database|db|query|table|schema)\b/i', $allContent)) {
+            $tags[] = 'database';
+        }
+
+        if (preg_match('/\b(api|rest|endpoint|http|request|response)\b/i', $allContent)) {
+            $tags[] = 'api';
+        }
+
         // Tag for code
         if ($hasCode) {
             $tags[] = 'code';
         }
         
-        // Language detection (simple English vs non-English)
-        if ($this->isEnglishText($allContent)) {
-            $tags[] = 'english';
-        } else {
-            $tags[] = 'non-english';
+        // Conversation length
+        if (count($messages) > 20) {
+            $tags[] = 'long-conversation';
+        } elseif (count($messages) <= 5) {
+            $tags[] = 'quick-question';
         }
         
-        return $tags;
+        return array_unique($tags);
     }
     
     private function isEnglishText($text) {
@@ -620,6 +675,25 @@ class SQLiteLogStorage extends LogStorage {
         }
         
         return false;
+    }
+
+    public function deleteConversation($conversationId) {
+        $this->db->beginTransaction();
+        try {
+            // Delete messages first (due to foreign key constraint)
+            $stmt = $this->db->prepare("DELETE FROM messages WHERE conversation_id = ?");
+            $stmt->execute([$conversationId]);
+
+            // Delete conversation
+            $stmt = $this->db->prepare("DELETE FROM conversations WHERE id = ?");
+            $stmt->execute([$conversationId]);
+
+            $this->db->commit();
+            return true;
+        } catch (Exception $e) {
+            $this->db->rollback();
+            return false;
+        }
     }
 
     public function __destruct() {
