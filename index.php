@@ -379,9 +379,9 @@ function processInlineFormatting( $text ) {
 	<meta charset="UTF-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
 	<title>cll Web Interface</title>
-	<link rel="stylesheet" href="katex.min.css">
-	<script defer src="katex.min.js"></script>
-	<script defer src="auto-render.min.js"></script>
+	<link rel="stylesheet" href="katex/katex.min.css">
+	<script defer src="katex/katex.min.js"></script>
+	<script defer src="katex/auto-render.min.js"></script>
 	<style>
 		body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }
 		.container { max-width: 1200px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
