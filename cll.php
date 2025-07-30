@@ -6,7 +6,7 @@ $openai_key = getenv( 'OPENAI_API_KEY', true );
 $anthropic_key = getenv( 'ANTHROPIC_API_KEY', true );
 $ansi = function_exists( 'posix_isatty' ) && posix_isatty( STDOUT );
 
-$options = getopt( 'ds:li:p:vhfm:r:w::', array( 'help', 'version', 'webui' ), $initial_input );
+$options = getopt( 'ds:li:p:vhfm:r:w::n', array( 'help', 'version', 'webui' ), $initial_input );
 
 if ( ! isset( $options['m'] ) ) {
 	putenv('RES_OPTIONS=retrans:1 retry:1 timeout:1 attempts:1');
@@ -20,6 +20,135 @@ curl_setopt( $ch, CURLOPT_RETURNTRANSFER, 1 );
 curl_setopt( $ch, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1 );
 
 function dont_auto_complete ($input, $index) { return []; }
+
+function convert_latex_to_unicode($text) {
+	return preg_replace_callback('/\\\\\[([^\]]+)\\\\\]|\\\\\(([^)]+)\\\\\)|\$\$([^$]+)\$\$|\$([^$]+)\$/', function($matches) {
+		$latex = $matches[1] ?? $matches[2] ?? $matches[3] ?? $matches[4] ?? '';
+		
+		// Common LaTeX to Unicode conversions
+		$conversions = [
+			// Fractions
+			'/\\\\frac\{([^}]+)\}\{([^}]+)\}/' => '$1/$2',
+			
+			// Greek letters
+			'/\\\\alpha/' => 'α',
+			'/\\\\beta/' => 'β',
+			'/\\\\gamma/' => 'γ',
+			'/\\\\delta/' => 'δ',
+			'/\\\\epsilon/' => 'ε',
+			'/\\\\zeta/' => 'ζ',
+			'/\\\\eta/' => 'η',
+			'/\\\\theta/' => 'θ',
+			'/\\\\iota/' => 'ι',
+			'/\\\\kappa/' => 'κ',
+			'/\\\\lambda/' => 'λ',
+			'/\\\\mu/' => 'μ',
+			'/\\\\nu/' => 'ν',
+			'/\\\\xi/' => 'ξ',
+			'/\\\\pi/' => 'π',
+			'/\\\\rho/' => 'ρ',
+			'/\\\\sigma/' => 'σ',
+			'/\\\\tau/' => 'τ',
+			'/\\\\upsilon/' => 'υ',
+			'/\\\\phi/' => 'φ',
+			'/\\\\chi/' => 'χ',
+			'/\\\\psi/' => 'ψ',
+			'/\\\\omega/' => 'ω',
+			'/\\\\Gamma/' => 'Γ',
+			'/\\\\Delta/' => 'Δ',
+			'/\\\\Theta/' => 'Θ',
+			'/\\\\Lambda/' => 'Λ',
+			'/\\\\Xi/' => 'Ξ',
+			'/\\\\Pi/' => 'Π',
+			'/\\\\Sigma/' => 'Σ',
+			'/\\\\Phi/' => 'Φ',
+			'/\\\\Psi/' => 'Ψ',
+			'/\\\\Omega/' => 'Ω',
+			
+			// Mathematical symbols
+			'/\\\\ldots/' => '…',
+			'/\\\\cdots/' => '⋯',
+			'/\\\\times/' => '×',
+			'/\\\\div/' => '÷',
+			'/\\\\pm/' => '±',
+			'/\\\\mp/' => '∓',
+			'/\\\\infty/' => '∞',
+			'/\\\\sum/' => '∑',
+			'/\\\\prod/' => '∏',
+			'/\\\\int/' => '∫',
+			'/\\\\oint/' => '∮',
+			'/\\\\partial/' => '∂',
+			'/\\\\nabla/' => '∇',
+			'/\\\\sqrt\{([^}]+)\}/' => '√($1)',
+			'/\\\\approx/' => '≈',
+			'/\\\\equiv/' => '≡',
+			'/\\\\neq/' => '≠',
+			'/\\\\leq/' => '≤',
+			'/\\\\geq/' => '≥',
+			'/\\\\ll/' => '≪',
+			'/\\\\gg/' => '≫',
+			'/\\\\in/' => '∈',
+			'/\\\\notin/' => '∉',
+			'/\\\\subset/' => '⊂',
+			'/\\\\supset/' => '⊃',
+			'/\\\\subseteq/' => '⊆',
+			'/\\\\supseteq/' => '⊇',
+			'/\\\\cup/' => '∪',
+			'/\\\\cap/' => '∩',
+			'/\\\\emptyset/' => '∅',
+			'/\\\\exists/' => '∃',
+			'/\\\\forall/' => '∀',
+			'/\\\\neg/' => '¬',
+			'/\\\\land/' => '∧',
+			'/\\\\lor/' => '∨',
+			'/\\\\rightarrow/' => '→',
+			'/\\\\leftarrow/' => '←',
+			'/\\\\leftrightarrow/' => '↔',
+			'/\\\\Rightarrow/' => '⇒',
+			'/\\\\Leftarrow/' => '⇐',
+			'/\\\\Leftrightarrow/' => '⇔',
+			
+			// Superscripts
+			'/\^0/' => '⁰',
+			'/\^1/' => '¹',
+			'/\^2/' => '²',
+			'/\^3/' => '³',
+			'/\^4/' => '⁴',
+			'/\^5/' => '⁵',
+			'/\^6/' => '⁶',
+			'/\^7/' => '⁷',
+			'/\^8/' => '⁸',
+			'/\^9/' => '⁹',
+			'/\^\+/' => '⁺',
+			'/\^-/' => '⁻',
+			'/\^n/' => 'ⁿ',
+			
+			// Subscripts
+			'/_0/' => '₀',
+			'/_1/' => '₁',
+			'/_2/' => '₂',
+			'/_3/' => '₃',
+			'/_4/' => '₄',
+			'/_5/' => '₅',
+			'/_6/' => '₆',
+			'/_7/' => '₇',
+			'/_8/' => '₈',
+			'/_9/' => '₉',
+			'/_\+/' => '₊',
+			'/_-/' => '₋',
+		];
+		
+		// Apply conversions
+		foreach ($conversions as $pattern => $replacement) {
+			$latex = preg_replace($pattern, $replacement, $latex);
+		}
+		
+		// Clean up any remaining LaTeX commands by removing backslashes
+		$latex = preg_replace('/\\\\([a-zA-Z]+)/', '$1', $latex);
+		
+		return $latex;
+	}, $text);
+}
 function output_message( $message ) {
 	global $ansi;
 	if ( ! isset( $ansi ) ) {
@@ -49,6 +178,9 @@ function output_message( $message ) {
 		'in_code_block' => false,
 		'code_block_start' => false,
 		'maybe_code_block_end' => false,
+		'math_buffer' => '',
+		'math_type' => false, // false, 'inline_paren', 'inline_dollar', 'display_bracket', 'display_dollar'
+		'math_start_pos' => 0,
 	);
 
 	$message = $old_message . $message;
@@ -262,16 +394,23 @@ $readline_history_file = __DIR__ . '/.history';
 $sqlite_db_path = __DIR__ . '/chats.sqlite';
 $time = time();
 
-// Initialize SQLite log storage
-try {
-	if (!class_exists('PDO') || !in_array('sqlite', PDO::getAvailableDrivers())) {
-		echo 'Error: SQLite PDO extension is required but not available.', PHP_EOL;
-		exit(1);
+if ( isset( $options['n'] ) ) {
+	$logStorage = new NoLogStorage();
+	fprintf( STDERR, 'Private conversation, it will not be saved.' . PHP_EOL );
+} else {
+	try {
+		if (class_exists('PDO') && in_array('sqlite', PDO::getAvailableDrivers())) {
+			$logStorage = new SQLiteLogStorage($sqlite_db_path);
+		} else {
+			$logStorage = new NoLogStorage();
+		}
+	} catch (Exception $e) {
+		$logStorage = new NoLogStorage();
 	}
-	$logStorage = new SQLiteLogStorage($sqlite_db_path);
-} catch (Exception $e) {
-	echo 'Error initializing SQLite storage: ', $e->getMessage(), PHP_EOL;
-	exit(1);
+
+	if ( $logStorage instanceof NoLogStorage ) {
+		fprintf( STDERR, 'Warning: No logging storage available. Conversations will not be saved.' . PHP_EOL );
+	}
 }
 
 $system = false;
@@ -550,8 +689,7 @@ $wrapper = array(
 );
 
 if ( $ansi || isset( $options['v'] ) ) {
-	fprintf( STDERR, 'Model: ' . $model . ' via ' . $model_provider . ( isset( $options['v'] ) ? ' (verbose)' : '' ) . ', ' );
-	fprintf( STDERR, 'Storage: SQLite' . PHP_EOL );
+	fprintf( STDERR, 'Model: ' . $model . ' via ' . $model_provider . ( isset( $options['v'] ) ? ' (verbose)' : '' ) . PHP_EOL );
 }
 
 // Let SQLite auto-generate the conversation ID

@@ -210,10 +210,23 @@ function renderMarkdown($text) {
     $originalText = $text;
     $debugComment = "<!-- Original markdown:\n" . htmlspecialchars($originalText) . "\n-->\n";
     
-    // Keep both original and escaped versions
-    $originalLines = explode("\n", $originalText);
+    // Extract and protect math expressions before HTML escaping
+    $mathExpressions = [];
+    $mathCounter = 0;
+    
+    // Find and replace math expressions with placeholders
+    $text = preg_replace_callback('/\\\\\[([^\]]+)\\\\\]|\\\\\(([^)]+)\\\\\)|\$\$([^$]+)\$\$|\$([^$]+)\$/', function($matches) use (&$mathExpressions, &$mathCounter) {
+        $placeholder = "MATHPLACEHOLDER" . $mathCounter++;
+        $mathExpressions[$placeholder] = $matches[0]; // Store the full match
+        return $placeholder;
+    }, $text);
+    
+    // Now HTML escape the text with placeholders
     $escapedText = htmlspecialchars($text);
     $lines = explode("\n", $escapedText);
+    
+    // We also need the original lines for code block processing
+    $originalLines = explode("\n", $originalText);
     
     $result = [];
     $state = [
@@ -229,7 +242,9 @@ function renderMarkdown($text) {
         $trimmed = trim($line);
         
         // Check for code block delimiters (look for ``` at start of trimmed line)
-        if (preg_match('/^```([a-zA-Z0-9_+-]*)\s*$/', trim($originalLine), $matches)) {
+        // Use the original text to detect code blocks, but work with placeholder text for content
+        $originalLineForCodeCheck = $originalLines[$i] ?? '';
+        if (preg_match('/^```([a-zA-Z0-9_+-]*)\s*$/', trim($originalLineForCodeCheck), $matches)) {
             if (!$state['inCodeBlock']) {
                 // Starting code block
                 if ($state['inList']) {
@@ -253,7 +268,7 @@ function renderMarkdown($text) {
         
         // If inside code block, collect original lines (not HTML escaped)
         if ($state['inCodeBlock']) {
-            $state['codeBlockLines'][] = $originalLine;
+            $state['codeBlockLines'][] = $originalLineForCodeCheck;
             continue;
         }
         
@@ -301,10 +316,33 @@ function renderMarkdown($text) {
         }
     }
     
-    return $debugComment . implode("\n", $result);
+    $finalResult = implode("\n", $result);
+    
+    // Debug: Add info about math expressions found
+    $debugInfo = "<!-- Math expressions found: " . count($mathExpressions) . " -->\n";
+    if (!empty($mathExpressions)) {
+        $debugInfo .= "<!-- Placeholders: " . implode(', ', array_keys($mathExpressions)) . " -->\n";
+    }
+    
+    // Restore math expressions
+    foreach ($mathExpressions as $placeholder => $mathExpression) {
+        $finalResult = str_replace($placeholder, $mathExpression, $finalResult);
+    }
+    
+    return $debugComment . $debugInfo . $finalResult;
 }
 
 function processInlineFormatting($text) {
+    // Extract and protect math expressions first
+    $mathExpressions = [];
+    $mathCounter = 0;
+    
+    // Find and replace math expressions with placeholders
+    $text = preg_replace_callback('/MATHPLACEHOLDER\d+/', function($matches) use (&$mathExpressions, &$mathCounter) {
+        // If it's already a placeholder, keep it as is
+        return $matches[0];
+    }, $text);
+    
     // Process inline code first to protect it
     $text = preg_replace('/`([^`]+)`/', '<code>$1</code>', $text);
     
@@ -329,6 +367,9 @@ function processInlineFormatting($text) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>cll Web Interface</title>
+    <link rel="stylesheet" href="katex.min.css">
+    <script defer src="katex.min.js"></script>
+    <script defer src="auto-render.min.js"></script>
     <style>
         body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }
         .container { max-width: 1200px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
@@ -1141,5 +1182,22 @@ function processInlineFormatting($text) {
             <?php endif; ?>
         <?php endif; ?>
     </div>
+
+    <script>
+    document.addEventListener("DOMContentLoaded", function() {
+        if (typeof renderMathInElement !== 'undefined') {
+            renderMathInElement(document.body, {
+                delimiters: [
+                    {left: '\\[', right: '\\]', display: true},
+                    {left: '\\(', right: '\\)', display: false},
+                    {left: '$', right: '$', display: false},
+                    {left: '$$', right: '$$', display: true}
+                ],
+                throwOnError: false,
+                strict: false
+            });
+        }
+    });
+    </script>
 </body>
 </html>

@@ -11,6 +11,52 @@ abstract class LogStorage {
     abstract public function copyConversation($sourceId, $targetId);
 }
 
+class NoLogStorage extends LogStorage {
+    public function initializeConversation($conversationId, $model, $createdAt = null) {
+        return null; // No-op implementation
+    }
+
+    public function writeSystemPrompt($conversationId, $systemPrompt, $promptName = null) {
+        // No-op implementation
+    }
+
+    public function writeUserMessage($conversationId, $message, $createdAt = null) {
+        // No-op implementation
+    }
+
+    public function writeAssistantMessage($conversationId, $message, $createdAt = null) {
+        // No-op implementation
+    }
+
+    public function loadConversation($conversationId) {
+        return null; // No-op implementation
+    }
+
+    public function findConversations($limit = 10, $search = null, $tag = null, $offset = 0) {
+        return []; // No-op implementation
+    }
+
+    public function getConversationMetadata($conversationId) {
+        return null; // No-op implementation
+    }
+
+    public function copyConversation($sourceId, $targetId) {
+        return false; // No-op implementation
+    }
+
+    public function close($conversationId = null) {
+        // No-op implementation
+    }
+
+    public function getSystemPrompt($id) {
+        return null; // No-op implementation
+    }
+
+    public function getSystemPromptByName($name) {
+        return null; // No-op implementation
+    }
+}
+
 
 class SQLiteLogStorage extends LogStorage {
     private $db;
