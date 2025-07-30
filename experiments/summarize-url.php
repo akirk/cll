@@ -1,5 +1,5 @@
 <?php
-include __DIR__ . '/vendor/autoload.php';
+require __DIR__ . '/vendor/autoload.php';
 
 $openai_key = getenv( 'OPENAI_API_KEY', true );
 if ( empty( $openai_key ) ) {
@@ -23,19 +23,19 @@ function chatgpt( $messages ) {
 
 	$functions = array(
 		array(
-			"name"=> "get_url_contents",
-			"description"=> "Get the contens of the given URL on the internet",
-			"parameters"=> array(
-				"type"=> "object",
-				"properties"=> array(
-					"url"=> array(
-						"type"=> "string",
-						"description"=> "The URL",
+			'name'        => 'get_url_contents',
+			'description' => 'Get the contens of the given URL on the internet',
+			'parameters'  => array(
+				'type'       => 'object',
+				'properties' => array(
+					'url' => array(
+						'type'        => 'string',
+						'description' => 'The URL',
 					),
 				),
-				"required"=> array( "url" ),
-			)
-		)
+				'required'   => array( 'url' ),
+			),
+		),
 	);
 
 	$ch = curl_init();
@@ -55,9 +55,9 @@ function chatgpt( $messages ) {
 		CURLOPT_POSTFIELDS,
 		json_encode(
 			array(
-				'model'      => 'gpt-3.5-turbo-0613',
-				'messages'   => $messages,
-				'functions'  => $functions
+				'model'     => 'gpt-3.5-turbo-0613',
+				'messages'  => $messages,
+				'functions' => $functions,
 			)
 		)
 	);
@@ -75,7 +75,7 @@ if ( isset( $message['function_call']['name'] ) ) {
 	if ( $message['function_call']['name'] === 'get_url_contents' ) {
 		$args = json_decode( $message['function_call']['arguments'] );
 		echo 'Fetching ', $args->url, ' by request of ChatGPT.';
-		set_error_handler( function() {} );
+		set_error_handler( function () {} );
 		$config = new \andreskrey\Readability\Configuration();
 		$config->setFixRelativeURLs( true );
 		$config->setOriginalURL( $args->url );
@@ -87,7 +87,7 @@ if ( isset( $message['function_call']['name'] ) ) {
 
 		$messages[] = array(
 			'role'    => 'user',
-			'name' => $message['function_call']['name'],
+			'name'    => $message['function_call']['name'],
 			'content' => $content,
 		);
 		$output = chatgpt( $messages );

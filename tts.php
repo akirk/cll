@@ -14,7 +14,7 @@ if ( isset( $options['i'] ) ) {
 		if ( preg_match( '/[\x00-\x08\x0B\x0C\x0E-\x1F\x80-\xFF]/', $line ) && ! preg_match( '/^[\x09\x0A\x0C\x0D\x20-\x7E\xA0-\xFF]+$/', $line ) ) {
 			echo 'Skipping binary file: ', $file, PHP_EOL;
 			fclose( $if );
-			exit(1);
+			exit( 1 );
 		}
 
 		// show the first 5 lines:
@@ -34,7 +34,7 @@ if ( isset( $options['i'] ) ) {
 
 		$add = readline();
 		if ( $add && 'y' !== strtolower( $add ) ) {
-			exit(1);
+			exit( 1 );
 		}
 		$input = file_get_contents( $file );
 	} else {
@@ -73,58 +73,55 @@ $headers[] = 'Authorization: Bearer ' . $openai_key;
 
 $messages = array(
 	array(
-		'role' => 'system',
+		'role'    => 'system',
 		'content' => 'You are a speaker at a conference. This is your manuscript, please use it as a not overly loose reference for the talk. Cover all details and take about 20 minutes for it.',
 	),
 	array(
-		'role' => 'user',
+		'role'    => 'user',
 		'content' => $input,
-	)
+	),
 );
 $voice = 'ballad';
 $openai_payload = array(
-	'model' => 'gpt-4o-audio-preview',
+	'model'      => 'gpt-4o-audio-preview',
 	'modalities' => array( 'text', 'audio' ),
-	'audio' => array(
-		'voice' => $voice,
+	'audio'      => array(
+		'voice'  => $voice,
 		'format' => 'pcm16',
 	),
-	'messages' => $messages,
-	'stream' => true,
+	'messages'   => $messages,
+	'stream'     => true,
 );
 $output_filename = 'tts-' . date( 'Y-m-d-H-i-s' ) . '.wav';
 
 echo 'Output file: ', $output_filename, PHP_EOL;
 
 // Wave file header
-function wave($numChannels, $sampleRate, $bitsPerSample, $durationSeconds) {
-  $numSamples= $sampleRate * $durationSeconds;
-  $byteRate= $sampleRate * $numChannels * $bitsPerSample / 8;
-  $blockAlign= $numChannels * $bitsPerSample / 8;
-  $dataSize= $numSamples * $blockAlign;
+function wave( $numChannels, $sampleRate, $bitsPerSample, $durationSeconds ) {
+	$numSamples = $sampleRate * $durationSeconds;
+	$byteRate = $sampleRate * $numChannels * $bitsPerSample / 8;
+	$blockAlign = $numChannels * $bitsPerSample / 8;
+	$dataSize = $numSamples * $blockAlign;
 
-  return pack(
-    'a*Va*a*VvvVVvva*V',
-
-    // Header
-    'RIFF',
-    44 + $dataSize - 8,
-    'WAVE',
-
-    // First chunk with audio format PCM (1)
-    'fmt ',
-    16,
-    1,
-    $numChannels,
-    $sampleRate,
-    $byteRate,
-    $blockAlign,
-    $bitsPerSample,
-
-    // Second chunk
-    'data',
-    $dataSize
-  );
+	return pack(
+		'a*Va*a*VvvVVvva*V',
+		// Header
+		'RIFF',
+		44 + $dataSize - 8,
+		'WAVE',
+		// First chunk with audio format PCM (1)
+		'fmt ',
+		16,
+		1,
+		$numChannels,
+		$sampleRate,
+		$byteRate,
+		$blockAlign,
+		$bitsPerSample,
+		// Second chunk
+		'data',
+		$dataSize
+	);
 }
 
 file_put_contents( $output_filename, wave( 1, 24000, 16, 0 ) );

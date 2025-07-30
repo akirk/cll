@@ -4,7 +4,7 @@ $openai_key = getenv( 'OPENAI_API_KEY', true );
 $supported_voices = array();
 $ansi = function_exists( 'posix_isatty' ) && posix_isatty( STDOUT );
 
-putenv('RES_OPTIONS=retrans:1 retry:1 timeout:1 attempts:1');
+putenv( 'RES_OPTIONS=retrans:1 retry:1 timeout:1 attempts:1' );
 $online = gethostbyname( 'api.openai.com' ) !== 'api.openai.com';
 
 if ( ! $online ) {
@@ -78,7 +78,7 @@ $fp = false;
 
 if ( isset( $options['v'] ) ) {
 	$voice = false;
-	if ( isset( $supported_voices[$options['v']] ) ) {
+	if ( isset( $supported_voices[ $options['v'] ] ) ) {
 		$voice = $options['v'];
 	}
 	if ( ! $voice ) {
@@ -145,7 +145,7 @@ curl_setopt(
 	}
 );
 
-function correctSpelling($text) {
+function correctSpelling( $text ) {
 	global $openai_key;
 	$ch = curl_init();
 	curl_setopt( $ch, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1 );
@@ -166,17 +166,17 @@ function correctSpelling($text) {
 		CURLOPT_POSTFIELDS,
 		json_encode(
 			array(
-				'model'        => 'gpt-3.5-turbo',
-				'messages'     =>
+				'model'    => 'gpt-3.5-turbo',
+				'messages' =>
 				array(
 					array(
-						'role' => 'system',
+						'role'    => 'system',
 						'content' => 'Return the input text but spell corrected',
 					),
 					array(
-						'role' => 'user',
+						'role'    => 'user',
 						'content' => $text,
-					)
+					),
 				),
 			)
 		)
@@ -202,7 +202,7 @@ while ( true ) {
 		break;
 	}
 
-	if ( empty( $input )  ) {
+	if ( empty( $input ) ) {
 		continue;
 	}
 
@@ -215,7 +215,7 @@ while ( true ) {
 		$fp = fopen( $full_history_file, 'a' );
 	}
 	if ( preg_match( '/^s\d(.\d)?$/', $input ) ) {
-		$input = round(substr( $input, 1), 1);
+		$input = round( substr( $input, 1 ), 1 );
 		if ( $input >= 0.25 && $input <= 4.0 ) {
 			$speed = $input;
 		}
@@ -245,11 +245,11 @@ while ( true ) {
 		CURLOPT_POSTFIELDS,
 		json_encode(
 			array(
-				'model'        => 'tts-1',
-				'voice'        => $voice,
-				'input'        => $input,
-				'speed'        => $speed,
-				'stream'       => true,
+				'model'  => 'tts-1',
+				'voice'  => $voice,
+				'input'  => $input,
+				'speed'  => $speed,
+				'stream' => true,
 			)
 		)
 	);
@@ -271,4 +271,3 @@ echo 'Bye.', PHP_EOL;
 fclose( $fp );
 fclose( $pipes[0] );
 proc_close( $process );
-

@@ -31,8 +31,8 @@ curl_setopt(
 	CURLOPT_POSTFIELDS,
 	json_encode(
 		array(
-			'model'      => 'gpt-3.5-turbo-16k',
-			'messages'   => $messages,
+			'model'    => 'gpt-3.5-turbo-16k',
+			'messages' => $messages,
 		)
 	)
 );

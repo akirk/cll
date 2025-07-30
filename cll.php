@@ -6,10 +6,10 @@ $openai_key = getenv( 'OPENAI_API_KEY', true );
 $anthropic_key = getenv( 'ANTHROPIC_API_KEY', true );
 $ansi = function_exists( 'posix_isatty' ) && posix_isatty( STDOUT );
 
-$options = getopt( 'ds:li:p:vhfm:r:w::', array( 'help', 'version', 'webui' ), $initial_input );
+$options = getopt( 'ds:li:p:vhfm:r:w::n', array( 'help', 'version', 'webui' ), $initial_input );
 
 if ( ! isset( $options['m'] ) ) {
-	putenv('RES_OPTIONS=retrans:1 retry:1 timeout:1 attempts:1');
+	putenv( 'RES_OPTIONS=retrans:1 retry:1 timeout:1 attempts:1' );
 	$online = gethostbyname( 'api.openai.com.' ) !== 'api.openai.com.';
 } else {
 	$online = true;
@@ -19,14 +19,161 @@ $ch = curl_init();
 curl_setopt( $ch, CURLOPT_RETURNTRANSFER, 1 );
 curl_setopt( $ch, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1 );
 
-function dont_auto_complete ($input, $index) { return []; }
+function dont_auto_complete( $input, $index ) {
+	return array(); }
+
+function convert_latex_inner_content( $latex ) {
+	// Common LaTeX to Unicode conversions for inner content only
+	$conversions = array(
+		// Fractions - handle with and without spaces
+		'/\\\\frac\s*\{([^}]+)\}\s*\{([^}]+)\}/' => '($1)/($2)',
+
+		// Greek letters
+		'/\\\\alpha/'                            => 'α',
+		'/\\\\beta/'                             => 'β',
+		'/\\\\gamma/'                            => 'γ',
+		'/\\\\delta/'                            => 'δ',
+		'/\\\\epsilon/'                          => 'ε',
+		'/\\\\zeta/'                             => 'ζ',
+		'/\\\\eta/'                              => 'η',
+		'/\\\\theta/'                            => 'θ',
+		'/\\\\iota/'                             => 'ι',
+		'/\\\\kappa/'                            => 'κ',
+		'/\\\\lambda/'                           => 'λ',
+		'/\\\\mu/'                               => 'μ',
+		'/\\\\nu/'                               => 'ν',
+		'/\\\\xi/'                               => 'ξ',
+		'/\\\\pi/'                               => 'π',
+		'/\\\\rho/'                              => 'ρ',
+		'/\\\\sigma/'                            => 'σ',
+		'/\\\\tau/'                              => 'τ',
+		'/\\\\upsilon/'                          => 'υ',
+		'/\\\\phi/'                              => 'φ',
+		'/\\\\chi/'                              => 'χ',
+		'/\\\\psi/'                              => 'ψ',
+		'/\\\\omega/'                            => 'ω',
+		'/\\\\Gamma/'                            => 'Γ',
+		'/\\\\Delta/'                            => 'Δ',
+		'/\\\\Theta/'                            => 'Θ',
+		'/\\\\Lambda/'                           => 'Λ',
+		'/\\\\Xi/'                               => 'Ξ',
+		'/\\\\Pi/'                               => 'Π',
+		'/\\\\Sigma/'                            => 'Σ',
+		'/\\\\Phi/'                              => 'Φ',
+		'/\\\\Psi/'                              => 'Ψ',
+		'/\\\\Omega/'                            => 'Ω',
+
+		// Mathematical symbols
+		'/\\\\ldots/'                            => '…',
+		'/\\\\cdots/'                            => '⋯',
+		'/\\\\times/'                            => '×',
+		'/\\\\div/'                              => '÷',
+		'/\\\\pm/'                               => '±',
+		'/\\\\mp/'                               => '∓',
+		'/\\\\infty/'                            => '∞',
+		'/\\\\sum/'                              => '∑',
+		'/\\\\prod/'                             => '∏',
+		'/\\\\int/'                              => '∫',
+		'/\\\\oint/'                             => '∮',
+		'/\\\\partial/'                          => '∂',
+		'/\\\\nabla/'                            => '∇',
+		'/\\\\sqrt\{([^}]+)\}/'                  => '√($1)',
+		'/\\\\approx/'                           => '≈',
+		'/\\\\equiv/'                            => '≡',
+		'/\\\\neq/'                              => '≠',
+		'/\\\\leq/'                              => '≤',
+		'/\\\\geq/'                              => '≥',
+		'/\\\\ll/'                               => '≪',
+		'/\\\\gg/'                               => '≫',
+		'/\\\\in/'                               => '∈',
+		'/\\\\notin/'                            => '∉',
+		'/\\\\subset/'                           => '⊂',
+		'/\\\\supset/'                           => '⊃',
+		'/\\\\subseteq/'                         => '⊆',
+		'/\\\\supseteq/'                         => '⊇',
+		'/\\\\cup/'                              => '∪',
+		'/\\\\cap/'                              => '∩',
+		'/\\\\emptyset/'                         => '∅',
+		'/\\\\exists/'                           => '∃',
+		'/\\\\forall/'                           => '∀',
+		'/\\\\neg/'                              => '¬',
+		'/\\\\land/'                             => '∧',
+		'/\\\\lor/'                              => '∨',
+		'/\\\\rightarrow/'                       => '→',
+		'/\\\\leftarrow/'                        => '←',
+		'/\\\\leftrightarrow/'                   => '↔',
+		'/\\\\Rightarrow/'                       => '⇒',
+		'/\\\\Leftarrow/'                        => '⇐',
+		'/\\\\Leftrightarrow/'                   => '⇔',
+
+		// Superscripts
+		'/\^0/'                                  => '⁰',
+		'/\^1/'                                  => '¹',
+		'/\^2/'                                  => '²',
+		'/\^3/'                                  => '³',
+		'/\^4/'                                  => '⁴',
+		'/\^5/'                                  => '⁵',
+		'/\^6/'                                  => '⁶',
+		'/\^7/'                                  => '⁷',
+		'/\^8/'                                  => '⁸',
+		'/\^9/'                                  => '⁹',
+		'/\^\+/'                                 => '⁺',
+		'/\^-/'                                  => '⁻',
+		'/\^n/'                                  => 'ⁿ',
+
+		// Subscripts
+		'/_0/'                                   => '₀',
+		'/_1/'                                   => '₁',
+		'/_2/'                                   => '₂',
+		'/_3/'                                   => '₃',
+		'/_4/'                                   => '₄',
+		'/_5/'                                   => '₅',
+		'/_6/'                                   => '₆',
+		'/_7/'                                   => '₇',
+		'/_8/'                                   => '₈',
+		'/_9/'                                   => '₉',
+		'/_\+/'                                  => '₊',
+		'/_-/'                                   => '₋',
+	);
+
+	// Apply conversions
+	foreach ( $conversions as $pattern => $replacement ) {
+		$latex = preg_replace( $pattern, $replacement, $latex );
+	}
+
+	// Clean up any remaining LaTeX commands by removing backslashes
+	// But preserve single letters and variables - only remove known LaTeX commands
+	$latex = preg_replace( '/\\\\(text|mathbf|mathrm|mathit|mathcal|mathfrak|operatorname)([^a-zA-Z]|$)/', '$2', $latex );
+
+	return trim( $latex );
+}
+
+function convert_latex_to_unicode( $text ) {
+	return preg_replace_callback(
+		'/\\\\\[([^\]]+)\\\\\]|\\\\\(([^)]+)\\\\\)|\$\$([^$]+)\$\$|\$([^$]+)\$/',
+		function ( $matches ) {
+			// Find which group matched
+			$latex = '';
+			for ( $i = 1; $i <= 4; $i++ ) {
+				if ( isset( $matches[ $i ] ) && $matches[ $i ] !== '' ) {
+					$latex = $matches[ $i ];
+					break;
+				}
+			}
+
+			// Convert the inner LaTeX content
+			return convert_latex_inner_content( $latex );
+		},
+		$text
+	);
+}
 function output_message( $message ) {
 	global $ansi;
 	if ( ! isset( $ansi ) ) {
 		$ansi = false;
 	}
 	static $old_message = '';
-	if ( $message === '') {
+	if ( $message === '' ) {
 		$old_message = '';
 	}
 	static $chunks = array();
@@ -38,17 +185,20 @@ function output_message( $message ) {
 		$chunks[] = $message;
 	}
 	static $state = array(
-		'maybe_bold' => false,
-		'maybe_underline' => false,
+		'maybe_bold'            => false,
+		'maybe_underline'       => false,
 		'maybe_underline_words' => 0,
-		'maybe_space_to_tab' => false,
-		'bold' => false,
-		'headline' => false,
-		'trimnext' => false,
-		'inline_code' => false,
-		'in_code_block' => false,
-		'code_block_start' => false,
-		'maybe_code_block_end' => false,
+		'maybe_space_to_tab'    => false,
+		'bold'                  => false,
+		'headline'              => false,
+		'trimnext'              => false,
+		'inline_code'           => false,
+		'in_code_block'         => false,
+		'code_block_start'      => false,
+		'maybe_code_block_end'  => false,
+		'math_buffer'           => '',
+		'math_type'             => false, // false, 'inline_paren', 'inline_dollar', 'display_bracket', 'display_dollar'
+		'math_start_pos'        => 0,
 	);
 
 	$message = $old_message . $message;
@@ -56,11 +206,11 @@ function output_message( $message ) {
 	$old_message = $message;
 	$length = strlen( $message );
 
-	while ($i < $length) {
+	while ( $i < $length ) {
 
 		// Check for the start of a code block
 		$last_php_eol = $i > 1 ? strrpos( $message, PHP_EOL, $i - $length - 1 ) : 0;
-		$is_word_delimiter = strpos( PHP_EOL . ' ,;.-_!?()[]{}:', $message[$i] ) !== false;
+		$is_word_delimiter = strpos( PHP_EOL . ' ,;.-_!?()[]{}:', $message[ $i ] ) !== false;
 
 		if ( $i > 1 && substr( $message, $i - 2, 3 ) === '```' && trim( substr( $message, $last_php_eol, $i - $last_php_eol - 2 ) ) === '' ) {
 
@@ -69,7 +219,7 @@ function output_message( $message ) {
 				if ( $ansi ) {
 					echo "\033[m";
 				}
-				if ( false !== $state['maybe_code_block_end']) {
+				if ( false !== $state['maybe_code_block_end'] ) {
 					if ( $ansi ) {
 						echo substr( $message, $state['maybe_code_block_end'], 2 );
 					}
@@ -79,22 +229,22 @@ function output_message( $message ) {
 			} else {
 				$state['code_block_start'] = true;
 				if ( $ansi ) {
-					echo substr($message, $i - 2, 2);
+					echo substr( $message, $i - 2, 2 );
 				}
 			}
 			if ( $ansi ) {
-				echo $message[$i];
+				echo $message[ $i ];
 			}
-			$i++;
+			++$i;
 			continue;
 		}
 
 		// If we're in a code block, just output the text as is
-		if ($state['code_block_start'] ) {
+		if ( $state['code_block_start'] ) {
 			if ( $ansi ) {
-				echo $message[$i];
+				echo $message[ $i ];
 			}
-			if ($message[$i] === PHP_EOL) {
+			if ( $message[ $i ] === PHP_EOL ) {
 				$state['code_block_start'] = false;
 				$state['in_code_block'] = true;
 				// show in darkgrey
@@ -102,20 +252,20 @@ function output_message( $message ) {
 					echo "\033[90m";
 				}
 			}
-			$i++;
+			++$i;
 			continue;
 		}
 
-		if ($state['in_code_block']) {
-			if ( $message[$i] === PHP_EOL ) {
+		if ( $state['in_code_block'] ) {
+			if ( $message[ $i ] === PHP_EOL ) {
 				$state['maybe_space_to_tab'] = 0;
-				echo $message[$i++];
+				echo $message[ $i++ ];
 				continue;
 			}
 			if ( $state['maybe_space_to_tab'] !== false ) {
-				if ( $message[$i] === ' ') {
-					$i++;
-					$state['maybe_space_to_tab']++;
+				if ( $message[ $i ] === ' ' ) {
+					++$i;
+					++$state['maybe_space_to_tab'];
 					continue;
 				}
 
@@ -125,31 +275,111 @@ function output_message( $message ) {
 					if ( $spaces_count % 4 == 0 ) {
 						echo str_repeat( "\t", $spaces_count / 4 );
 					} else {
-						echo str_repeat( " ", $spaces_count );
+						echo str_repeat( ' ', $spaces_count );
 					}
-					echo $message[$i++];
+					echo $message[ $i++ ];
 					continue;
 				}
 			}
 			$state['maybe_space_to_tab'] = false;
-			if ( false === $state['maybe_code_block_end'] && $message[$i] === '`' && trim( substr( $message, $last_php_eol, $i - $last_php_eol-1) ) === '') {
+			if ( false === $state['maybe_code_block_end'] && $message[ $i ] === '`' && trim( substr( $message, $last_php_eol, $i - $last_php_eol - 1 ) ) === '' ) {
 				$state['maybe_code_block_end'] = $i;
-				$i++;
+				++$i;
 				continue;
 			}
-			if ( false !== $state['maybe_code_block_end'] && substr( $message, $i-1, 2) === '``' && trim( substr( $message, $last_php_eol, $i - $last_php_eol-2) ) === '') {
-				$i++;
+			if ( false !== $state['maybe_code_block_end'] && substr( $message, $i - 1, 2 ) === '``' && trim( substr( $message, $last_php_eol, $i - $last_php_eol - 2 ) ) === '' ) {
+				++$i;
 				continue;
 			}
-			echo $message[$i++];
+			echo $message[ $i++ ];
 			continue;
 		}
 
+		// Math expression detection and processing (outside code blocks)
+		if ( ! $state['in_code_block'] && ! $state['code_block_start'] ) {
+			// Check for start of math expressions
+			if ( ! $state['math_type'] ) {
+				// Look for \[ (display math)
+				if ( $message[ $i ] === '\\' && isset( $message[ $i + 1 ] ) && $message[ $i + 1 ] === '[' ) {
+					$state['math_type'] = 'display_bracket';
+					$state['math_buffer'] = '\\[';
+					$state['math_start_pos'] = $i;
+					$i += 2;
+					continue;
+				}
+				// Look for \( (inline math)
+				if ( $message[ $i ] === '\\' && isset( $message[ $i + 1 ] ) && $message[ $i + 1 ] === '(' ) {
+					$state['math_type'] = 'inline_paren';
+					$state['math_buffer'] = '\\(';
+					$state['math_start_pos'] = $i;
+					$i += 2;
+					continue;
+				}
+				// Look for $$ (display math)
+				if ( $message[ $i ] === '$' && isset( $message[ $i + 1 ] ) && $message[ $i + 1 ] === '$' ) {
+					$state['math_type'] = 'display_dollar';
+					$state['math_buffer'] = '$$';
+					$state['math_start_pos'] = $i;
+					$i += 2;
+					continue;
+				}
+				// Look for $ (inline math) - but not if already $$
+				if ( $message[ $i ] === '$' && ! ( isset( $message[ $i - 1 ] ) && $message[ $i - 1 ] === '$' ) ) {
+					$state['math_type'] = 'inline_dollar';
+					$state['math_buffer'] = '$';
+					$state['math_start_pos'] = $i;
+					++$i;
+					continue;
+				}
+			} else {
+				// We're inside a math expression, buffer it
+				$state['math_buffer'] .= $message[ $i ];
+
+				// Check for end of math expressions
+				$shouldClose = false;
+				if ( $state['math_type'] === 'display_bracket' && $message[ $i ] === ']' && isset( $message[ $i - 1 ] ) && $message[ $i - 1 ] === '\\' ) {
+					$shouldClose = true;
+				} elseif ( $state['math_type'] === 'inline_paren' && $message[ $i ] === ')' && isset( $message[ $i - 1 ] ) && $message[ $i - 1 ] === '\\' ) {
+					$shouldClose = true;
+				} elseif ( $state['math_type'] === 'display_dollar' && $message[ $i ] === '$' && isset( $message[ $i - 1 ] ) && $message[ $i - 1 ] === '$' ) {
+					$shouldClose = true;
+				} elseif ( $state['math_type'] === 'inline_dollar' && $message[ $i ] === '$' ) {
+					$shouldClose = true;
+				}
+
+				if ( $shouldClose ) {
+					// Extract just the inner content and convert it
+					$innerContent = '';
+					if ( $state['math_type'] === 'display_bracket' ) {
+						$innerContent = substr( $state['math_buffer'], 2, -2 ); // Remove \[ and \]
+					} elseif ( $state['math_type'] === 'inline_paren' ) {
+						$innerContent = substr( $state['math_buffer'], 2, -2 ); // Remove \( and \)
+					} elseif ( $state['math_type'] === 'display_dollar' ) {
+						$innerContent = substr( $state['math_buffer'], 2, -2 ); // Remove $$ and $$
+					} elseif ( $state['math_type'] === 'inline_dollar' ) {
+						$innerContent = substr( $state['math_buffer'], 1, -1 ); // Remove $ and $
+					}
+
+					// Convert the inner content
+					$converted = convert_latex_inner_content( $innerContent );
+					echo $converted;
+
+					// Reset math state
+					$state['math_type'] = false;
+					$state['math_buffer'] = '';
+					$state['math_start_pos'] = 0;
+				}
+
+				++$i;
+				continue;
+			}
+		}
+
 		// Process bold and headline markers only outside code blocks
-		if ($message[$i] === '*') {
+		if ( $message[ $i ] === '*' ) {
 			// The second *.
 			if ( $state['maybe_bold'] ) {
-				$state['bold'] = !$state['bold'];
+				$state['bold'] = ! $state['bold'];
 				if ( $ansi ) {
 					echo $state['bold'] ? "\033[1m" : "\033[m";
 				}
@@ -167,7 +397,7 @@ function output_message( $message ) {
 			} else {
 				$state['maybe_bold'] = true;
 			}
-			$i++; // Move past the bold indicator
+			++$i; // Move past the bold indicator
 			continue;
 		} elseif ( $state['maybe_bold'] ) {
 			// No second *.
@@ -176,74 +406,74 @@ function output_message( $message ) {
 			if ( ! $is_word_delimiter ) {
 				$state['maybe_underline'] = $i;
 				$state['maybe_underline_words'] = 0;
-				$i++;
+				++$i;
 				continue;
 			}
-			$i--;
+			--$i;
 		} elseif ( false !== $state['maybe_underline'] ) {
 			if ( ! $is_word_delimiter ) {
 				// buffer
-				$i++;
+				++$i;
 				continue;
 			}
-			if ( $is_word_delimiter && $message[$i] !== PHP_EOL ) {
-				$state['maybe_underline_words']++;
+			if ( $is_word_delimiter && $message[ $i ] !== PHP_EOL ) {
+				++$state['maybe_underline_words'];
 				if ( $state['maybe_underline_words'] < 3 ) {
 					// buffer
-					$i++;
+					++$i;
 					continue;
 				}
 			}
-			echo substr( $message, $state['maybe_underline'] - 1, $i - $state['maybe_underline'] + 1);
+			echo substr( $message, $state['maybe_underline'] - 1, $i - $state['maybe_underline'] + 1 );
 			$state['maybe_underline'] = false;
 			$state['maybe_underline_words'] = 0;
 		}
 
 		// Process bold and headline markers only outside code blocks
-		if ($i > 1 && substr($message, $i-1, 2) === '**' && substr($message, $i - 2, 1) === PHP_EOL) {
-			$state['bold'] = !$state['bold'];
+		if ( $i > 1 && substr( $message, $i - 1, 2 ) === '**' && substr( $message, $i - 2, 1 ) === PHP_EOL ) {
+			$state['bold'] = ! $state['bold'];
 			if ( $ansi ) {
 				echo $state['bold'] ? "\033[1m" : "\033[m";
 			}
-			$i++; // Move past the bold indicator
+			++$i; // Move past the bold indicator
 			continue;
 		}
 
-		if ( substr($message, $i, 1) === '`') {
-			$state['inline_code'] = !$state['inline_code'];
+		if ( substr( $message, $i, 1 ) === '`' ) {
+			$state['inline_code'] = ! $state['inline_code'];
 			if ( $ansi ) {
 				echo $state['inline_code'] ? "\033[34m" : "\033[m";
 			}
-			$i++;
+			++$i;
 			continue;
 		}
 
 		if ( $state['trimnext'] ) {
-			if (trim($message[$i]) == '') {
-				$i++;
+			if ( trim( $message[ $i ] ) == '' ) {
+				++$i;
 				continue;
 			}
 			$state['trimnext'] = false;
 		}
 
-		if ( substr($message, $i, 1) === '#' && ( substr($message, $i - 1, 1) === PHP_EOL || !$i ) ) {
+		if ( substr( $message, $i, 1 ) === '#' && ( substr( $message, $i - 1, 1 ) === PHP_EOL || ! $i ) ) {
 			// Start of a headline
 			$state['headline'] = true;
 			$state['trimnext'] = true;
 			echo "\033[4m";
-			while ( $i < $length && ( $message[$i] === '#' || $message[$i] === ' ') ) {
-				$i++;
+			while ( $i < $length && ( $message[ $i ] === '#' || $message[ $i ] === ' ' ) ) {
+				++$i;
 			}
 			continue;
 		}
 
 		// Reset states on new lines
-		if ($message[$i] === PHP_EOL) {
-			if ( $i > 2 && substr($message, $i - 3, 3) === PHP_EOL . PHP_EOL . PHP_EOL ) {
-				$i++;
+		if ( $message[ $i ] === PHP_EOL ) {
+			if ( $i > 2 && substr( $message, $i - 3, 3 ) === PHP_EOL . PHP_EOL . PHP_EOL ) {
+				++$i;
 				continue;
 			}
-			if ($state['bold'] || $state['headline'] || $state['maybe_bold'] || $state['maybe_underline']) {
+			if ( $state['bold'] || $state['headline'] || $state['maybe_bold'] || $state['maybe_underline'] ) {
 				echo "\033[m"; // Reset bold and headline
 				$state['bold'] = false;
 				$state['headline'] = false;
@@ -252,26 +482,33 @@ function output_message( $message ) {
 			}
 		}
 
-		echo $message[$i++];
+		echo $message[ $i++ ];
 	}
 }
 
-readline_completion_function("dont_auto_complete");
+readline_completion_function( 'dont_auto_complete' );
 
 $readline_history_file = __DIR__ . '/.history';
 $sqlite_db_path = __DIR__ . '/chats.sqlite';
 $time = time();
 
-// Initialize SQLite log storage
-try {
-	if (!class_exists('PDO') || !in_array('sqlite', PDO::getAvailableDrivers())) {
-		echo 'Error: SQLite PDO extension is required but not available.', PHP_EOL;
-		exit(1);
+if ( isset( $options['n'] ) ) {
+	$logStorage = new NoLogStorage();
+	fprintf( STDERR, 'Private conversation, it will not be saved.' . PHP_EOL );
+} else {
+	try {
+		if ( class_exists( 'PDO' ) && in_array( 'sqlite', PDO::getAvailableDrivers() ) ) {
+			$logStorage = new SQLiteLogStorage( $sqlite_db_path );
+		} else {
+			$logStorage = new NoLogStorage();
+		}
+	} catch ( Exception $e ) {
+		$logStorage = new NoLogStorage();
 	}
-	$logStorage = new SQLiteLogStorage($sqlite_db_path);
-} catch (Exception $e) {
-	echo 'Error initializing SQLite storage: ', $e->getMessage(), PHP_EOL;
-	exit(1);
+
+	if ( $logStorage instanceof NoLogStorage ) {
+		fprintf( STDERR, 'Warning: No logging storage available. Conversations will not be saved.' . PHP_EOL );
+	}
 }
 
 $system = false;
@@ -301,12 +538,12 @@ if ( $online && isset( $options['m'] ) && $options['m'] == '' ) {
 			)
 		);
 
-		$response = curl_exec($ch);
-		$data = json_decode($response, true);
+		$response = curl_exec( $ch );
+		$data = json_decode( $response, true );
 
-		foreach ($data['data'] as $model) {
+		foreach ( $data['data'] as $model ) {
 			if ( 0 === strpos( $model['id'], 'gpt' ) ) {
-				$supported_models[ $model['id'] ]  = 'OpenAI';
+				$supported_models[ $model['id'] ] = 'OpenAI';
 			}
 		}
 	}
@@ -321,8 +558,8 @@ if ( $online && isset( $options['m'] ) && $options['m'] == '' ) {
 				'Content-Type: application/json',
 			)
 		);
-		$response = curl_exec($ch);
-		$data = json_decode($response, true);
+		$response = curl_exec( $ch );
+		$data = json_decode( $response, true );
 
 		foreach ( $data['data'] as $model ) {
 			if ( $model['type'] === 'model' && 0 === strpos( $model['id'], 'claude' ) ) {
@@ -356,37 +593,37 @@ if ( isset( $options['w'] ) || isset( $options['webui'] ) ) {
 	echo "Starting web UI on {$url}...", PHP_EOL;
 
 	// Check if port is available
-	$socket = @fsockopen($host, $port, $errno, $errstr, 1);
-	if ($socket) {
-		fclose($socket);
+	$socket = @fsockopen( $host, $port, $errno, $errstr, 1 );
+	if ( $socket ) {
+		fclose( $socket );
 		echo "Port {$port} is already in use. Trying to open browser anyway...", PHP_EOL;
-		exec("open '{$url}'");
-		exit(0);
+		exec( "open '{$url}'" );
+		exit( 0 );
 	}
 
 	// Start PHP built-in server in background
-	$command = "php -S {$host}:{$port} -t " . escapeshellarg(__DIR__) . " > /dev/null 2>&1 &";
-	exec($command);
+	$command = "php -S {$host}:{$port} -t " . escapeshellarg( __DIR__ ) . ' > /dev/null 2>&1 &';
+	exec( $command );
 
 	// Give server time to start
-	sleep(1);
+	sleep( 1 );
 
 	// Verify server started
-	$socket = @fsockopen($host, $port, $errno, $errstr, 2);
-	if (!$socket) {
+	$socket = @fsockopen( $host, $port, $errno, $errstr, 2 );
+	if ( ! $socket ) {
 		echo "Failed to start web server on port {$port}: {$errstr}", PHP_EOL;
-		exit(1);
+		exit( 1 );
 	}
-	fclose($socket);
+	fclose( $socket );
 
 	// Open browser
-	exec("open '{$url}'");
+	exec( "open '{$url}'" );
 	echo "Web UI started at {$url}", PHP_EOL;
-	echo "Server running in background. Press Ctrl+C to stop it.", PHP_EOL;
+	echo 'Server running in background. Press Ctrl+C to stop it.', PHP_EOL;
 
 	// Keep script running to show the message
-	while (true) {
-		sleep(3600); // Sleep for 1 hour, then repeat message
+	while ( true ) {
+		sleep( 3600 ); // Sleep for 1 hour, then repeat message
 		echo "Web UI still running at {$url} (Press Ctrl+C to exit)", PHP_EOL;
 	}
 }
@@ -402,26 +639,29 @@ if ( empty( $supported_models ) ) {
 }
 
 $model_weight = array_flip( array_reverse( array( 'gpt-4o-mini', 'gemma3', 'llama3', 'llama2' ) ) );
-uksort( $supported_models, function( $a, $b ) use ( $model_weight ) {
-	$a_weight = $b_weight = -1;
-	foreach ( $model_weight as $model => $weight ) {
-		if ( 0 === strpos( $a, $model ) ) {
-			$a_weight = $weight;
-		} elseif ( 0 === strpos( $b, $model ) ) {
-			$b_weight = $weight;
+uksort(
+	$supported_models,
+	function ( $a, $b ) use ( $model_weight ) {
+		$a_weight = $b_weight = -1;
+		foreach ( $model_weight as $model => $weight ) {
+			if ( 0 === strpos( $a, $model ) ) {
+				$a_weight = $weight;
+			} elseif ( 0 === strpos( $b, $model ) ) {
+				$b_weight = $weight;
+			}
 		}
-	}
 
-	if ( $a_weight > $b_weight ) {
-		return -1;
-	}
+		if ( $a_weight > $b_weight ) {
+			return -1;
+		}
 
-	if ( $a_weight < $b_weight ) {
-		return 1;
-	}
+		if ( $a_weight < $b_weight ) {
+			return 1;
+		}
 
-	return 0;
-} );
+		return 0;
+	}
+);
 
 $model = key( $supported_models );
 
@@ -519,7 +759,7 @@ fclose( $fp_stdin );
 
 if ( isset( $options['m'] ) ) {
 	$model = false;
-	if ( isset( $supported_models[$options['m']] ) ) {
+	if ( isset( $supported_models[ $options['m'] ] ) ) {
 		$model = $options['m'];
 	}
 	if ( ! $model && $options['m'] ) {
@@ -531,7 +771,7 @@ if ( isset( $options['m'] ) ) {
 		}
 	}
 	if ( ! $model ) {
-		foreach ($supported_models as $m => $provider ) {
+		foreach ( $supported_models as $m => $provider ) {
 			if ( $provider === $options['m'] ) {
 				$model = $m;
 				break;
@@ -543,22 +783,21 @@ if ( isset( $options['m'] ) ) {
 		exit( 1 );
 	}
 }
-$model_provider = $supported_models[$model];
+$model_provider = $supported_models[ $model ];
 $wrapper = array(
 	'model'  => $model,
 	'stream' => true,
 );
 
 if ( $ansi || isset( $options['v'] ) ) {
-	fprintf( STDERR, 'Model: ' . $model . ' via ' . $model_provider . ( isset( $options['v'] ) ? ' (verbose)' : '' ) . ', ' );
-	fprintf( STDERR, 'Storage: SQLite' . PHP_EOL );
+	fprintf( STDERR, 'Model: ' . $model . ' via ' . $model_provider . ( isset( $options['v'] ) ? ' (verbose)' : '' ) . PHP_EOL );
 }
 
 // Let SQLite auto-generate the conversation ID
 $conversation_id = null;
 
 if ( isset( $options['l'] ) ) {
-	$lastConversations = $logStorage->findConversations(1);
+	$lastConversations = $logStorage->findConversations( 1 );
 	$options['r'] = $lastConversations[0];
 }
 
@@ -573,11 +812,11 @@ if ( isset( $options['r'] ) ) {
 		$options['r'] = 10;
 	} else {
 		// Check if this is a specific conversation ID by trying to load it
-		$test_conversation = $logStorage->getConversationMetadata($options['r']);
+		$test_conversation = $logStorage->getConversationMetadata( $options['r'] );
 
-		if ($test_conversation) {
+		if ( $test_conversation ) {
 			$specific_conversation_id = $options['r'];
-			$conversations = array($specific_conversation_id => null);
+			$conversations = array( $specific_conversation_id => null );
 		} else {
 			$options['r'] = intval( $options['r'] );
 			if ( $options['r'] <= 0 ) {
@@ -586,44 +825,42 @@ if ( isset( $options['r'] ) ) {
 		}
 	}
 
-	if (!$specific_conversation_id) {
-		$conversation_list = $logStorage->findConversations($options['r'] * 10, $search);
+	if ( ! $specific_conversation_id ) {
+		$conversation_list = $logStorage->findConversations( $options['r'] * 10, $search );
 		$conversations = array();
-		foreach ($conversation_list as $conversation_key) {
-			$conversations[$conversation_key] = null; // Will be loaded later
+		foreach ( $conversation_list as $conversation_key ) {
+			$conversations[ $conversation_key ] = null; // Will be loaded later
 		}
 	} else {
 		// For specific conversation ID, we need to load the conversation data
-		$conversation_data = $logStorage->loadConversation($specific_conversation_id);
+		$conversation_data = $logStorage->loadConversation( $specific_conversation_id );
 		// Convert SQLite format to simple array format
-		if ($conversation_data && is_array($conversation_data)) {
-			$simple_split = [];
-			foreach ($conversation_data as $msg) {
-				if (is_array($msg) && isset($msg['content'])) {
+		if ( $conversation_data && is_array( $conversation_data ) ) {
+			$simple_split = array();
+			foreach ( $conversation_data as $msg ) {
+				if ( is_array( $msg ) && isset( $msg['content'] ) ) {
 					$simple_split[] = $msg['content'];
 				} else {
 					$simple_split[] = $msg;
 				}
 			}
-			$conversations[$specific_conversation_id] = $simple_split;
+			$conversations[ $specific_conversation_id ] = $simple_split;
 		} else {
 			echo 'Conversation not found or empty.', PHP_EOL;
-			exit(1);
+			exit( 1 );
 		}
 
 		// Set up for direct resume
-		$last_conversations = array(1 => $specific_conversation_id);
+		$last_conversations = array( 1 => $specific_conversation_id );
 	}
 
-	$length = is_numeric($options['r']) ? $options['r'] : 10;
+	$length = is_numeric( $options['r'] ) ? $options['r'] : 10;
 	if ( isset( $options['l'] ) ) {
 		echo 'Resuming the last conversation.', PHP_EOL;
-	} else {
-		if ($specific_conversation_id) {
+	} elseif ( $specific_conversation_id ) {
 			echo 'Resuming conversation ID: ', $specific_conversation_id, PHP_EOL;
-		} else {
-			echo 'Resuming a conversation. ';
-		}
+	} else {
+		echo 'Resuming a conversation. ';
 	}
 	$sel = $specific_conversation_id ? 1 : 'm';
 	$c = 0;
@@ -643,19 +880,19 @@ if ( isset( $options['r'] ) ) {
 			echo 'Please choose one: ', PHP_EOL;
 		}
 
-		if ( !empty( $current_conversation_batch ) ) {
+		if ( ! empty( $current_conversation_batch ) ) {
 			$length = 10;
 			foreach ( $current_conversation_batch as $k => $conversation_key ) {
 				// Get conversation metadata from storage
-				$metadata = $logStorage->getConversationMetadata($conversation_key);
-				if (!$metadata) {
+				$metadata = $logStorage->getConversationMetadata( $conversation_key );
+				if ( ! $metadata ) {
 					unset( $conversations[ $conversation_key ] );
 					unset( $current_conversation_batch[ $k ] );
 					continue;
 				}
 
 				$used_model = $metadata['model'];
-				if ( 'txt' === $used_model || empty($used_model) ) {
+				if ( 'txt' === $used_model || empty( $used_model ) ) {
 					$used_model = '';
 				} else {
 					if ( ! isset( $options['m'] ) ) {
@@ -664,7 +901,7 @@ if ( isset( $options['r'] ) ) {
 					}
 					$used_model .= ', ';
 				}
-				
+
 				$ago = '';
 				$unix_timestamp = $metadata['timestamp'];
 				if ( is_numeric( $unix_timestamp ) ) {
@@ -681,12 +918,12 @@ if ( isset( $options['r'] ) ) {
 				}
 
 				// Load conversation data
-				$split = $logStorage->loadConversation($conversation_key);
+				$split = $logStorage->loadConversation( $conversation_key );
 				// Convert SQLite format to simple array format expected by the rest of the code
-				if ($split && is_array($split)) {
-					$simple_split = [];
-					foreach ($split as $msg) {
-						if (is_array($msg) && isset($msg['content'])) {
+				if ( $split && is_array( $split ) ) {
+					$simple_split = array();
+					foreach ( $split as $msg ) {
+						if ( is_array( $msg ) && isset( $msg['content'] ) ) {
 							$simple_split[] = $msg['content'];
 						} else {
 							$simple_split[] = $msg;
@@ -695,7 +932,7 @@ if ( isset( $options['r'] ) ) {
 					$split = $simple_split;
 				}
 
-				if (!$split || count($split) < 2) {
+				if ( ! $split || count( $split ) < 2 ) {
 					unset( $conversations[ $conversation_key ] );
 					unset( $current_conversation_batch[ $k ] );
 					continue;
@@ -713,12 +950,12 @@ if ( isset( $options['r'] ) ) {
 						echo "\033[1m";
 					}
 					$first_message = $conversations[ $conversation_key ][0];
-					if (is_array($first_message) && isset($first_message['content'])) {
+					if ( is_array( $first_message ) && isset( $first_message['content'] ) ) {
 						$first_message = $first_message['content'];
 					}
-					if (substr($first_message, 0, 7) === 'System:') {
-						$first_message = isset($conversations[ $conversation_key ][1]) ? $conversations[ $conversation_key ][1] : '';
-						if (is_array($first_message) && isset($first_message['content'])) {
+					if ( substr( $first_message, 0, 7 ) === 'System:' ) {
+						$first_message = isset( $conversations[ $conversation_key ][1] ) ? $conversations[ $conversation_key ][1] : '';
+						if ( is_array( $first_message ) && isset( $first_message['content'] ) ) {
 							$first_message = $first_message['content'];
 						}
 					}
@@ -771,17 +1008,17 @@ if ( isset( $options['r'] ) ) {
 	if ( $sel ) {
 		if ( ! isset( $last_conversations[ $sel ] ) ) {
 			echo 'Invalid selection.', PHP_EOL;
-			exit(1);
+			exit( 1 );
 		}
 
 		$conversation_key = $last_conversations[ $sel ];
 		if ( ! isset( $conversations[ $conversation_key ] ) || ! is_array( $conversations[ $conversation_key ] ) ) {
 			echo 'Conversation data not found.', PHP_EOL;
-			exit(1);
+			exit( 1 );
 		}
 
-		$first_message = $conversations[ $conversation_key ][ 0 ];
-		$first_content = is_array($first_message) && isset($first_message['content']) ? $first_message['content'] : $first_message;
+		$first_message = $conversations[ $conversation_key ][0];
+		$first_content = is_array( $first_message ) && isset( $first_message['content'] ) ? $first_message['content'] : $first_message;
 
 		if ( substr( $first_content, 0, 7 ) === 'System:' ) {
 			$system = substr( $first_content, 8, strpos( $first_content, PHP_EOL ) - 8 );
@@ -789,10 +1026,10 @@ if ( isset( $options['r'] ) ) {
 			$system_prompt_name = null; // Resume case - no name available
 
 			// Update the first message with the remaining content
-			if (is_array($conversations[ $conversation_key ][ 0 ])) {
-				$conversations[ $conversation_key ][ 0 ]['content'] = $remaining_content;
+			if ( is_array( $conversations[ $conversation_key ][0] ) ) {
+				$conversations[ $conversation_key ][0]['content'] = $remaining_content;
 			} else {
-				$conversations[ $conversation_key ][ 0 ] = $remaining_content;
+				$conversations[ $conversation_key ][0] = $remaining_content;
 			}
 
 			if ( isset( $options['s'] ) && $options['s'] ) {
@@ -804,10 +1041,13 @@ if ( isset( $options['r'] ) ) {
 			if ( $model_provider === 'Anthropic' ) {
 				$wrapper['system'] = $system;
 			} else {
-				array_unshift( $messages, array(
-					'role'    => 'system',
-					'content' => $system,
-				) );
+				array_unshift(
+					$messages,
+					array(
+						'role'    => 'system',
+						'content' => $system,
+					)
+				);
 			}
 		}
 		$conversation_data = $conversations[ $conversation_key ];
@@ -818,7 +1058,7 @@ if ( isset( $options['r'] ) ) {
 			}
 
 			// Handle both string messages and array format from SQLite
-			$content = is_array($message) && isset($message['content']) ? $message['content'] : $message;
+			$content = is_array( $message ) && isset( $message['content'] ) ? $message['content'] : $message;
 
 			$messages[] = array(
 				'role'    => $k % 2 ? 'assistant' : 'user',
@@ -834,16 +1074,15 @@ if ( isset( $options['r'] ) ) {
 			$initial_input = ' ';
 			// Answer the question right away.
 		}
-
 	}
 } elseif ( ! empty( $options['s'] ) || isset( $options['f'] ) ) {
 	$system = '';
 	$system_prompt_name = null; // Track the name for tagging
 	if ( ! empty( $options['s'] ) ) {
-		if (is_numeric($options['s'])) {
-			$found_system_prompt = $logStorage->getSystemPrompt(intval($options['s']));
+		if ( is_numeric( $options['s'] ) ) {
+			$found_system_prompt = $logStorage->getSystemPrompt( intval( $options['s'] ) );
 		} else {
-			$found_system_prompt = $logStorage->getSystemPromptByName($options['s']);
+			$found_system_prompt = $logStorage->getSystemPromptByName( $options['s'] );
 		}
 		if ( $found_system_prompt ) {
 			$system = $found_system_prompt['prompt'];
@@ -854,7 +1093,7 @@ if ( isset( $options['r'] ) ) {
 			}
 
 			if ( $ansi || isset( $options['v'] ) ) {
-				echo 'Loaded system prompt ', $found_system_prompt['id'] , ': ', implode( ' ', $words ), PHP_EOL;
+				echo 'Loaded system prompt ', $found_system_prompt['id'], ': ', implode( ' ', $words ), PHP_EOL;
 			}
 		} else {
 			$system = $options['s'];
@@ -871,10 +1110,13 @@ if ( isset( $options['r'] ) ) {
 		if ( $model_provider === 'Anthropic' ) {
 			$wrapper['system'] = $system;
 		} else {
-			array_unshift( $messages, array(
-				'role'    => 'system',
-				'content' => $system,
-			) );
+			array_unshift(
+				$messages,
+				array(
+					'role'    => 'system',
+					'content' => $system,
+				)
+			);
 		}
 	}
 	if ( trim( $initial_input ) ) {
@@ -951,14 +1193,12 @@ curl_setopt(
 				} else {
 					$chunk_overflow = $item;
 				}
-			} else {
-				if ( isset( $json['choices'][0]['delta']['content'] ) ) {
+			} elseif ( isset( $json['choices'][0]['delta']['content'] ) ) {
 					output_message( $json['choices'][0]['delta']['content'] );
 
 					$message .= $json['choices'][0]['delta']['content'];
-				} else {
-					$chunk_overflow = $item;
-				}
+			} else {
+				$chunk_overflow = $item;
 			}
 		}
 
@@ -1009,15 +1249,15 @@ while ( true ) {
 	if ( ! $conversation_initialized ) {
 		if ( $sel && $last_conversations && isset( $last_conversations[ $sel ] ) ) {
 			$source_key = $last_conversations[ $sel ];
-			
+
 			// Use existing conversation ID
 			$conversation_id = $source_key;
 		} else {
 			// Only initialize new conversation if not resuming
-			$conversation_id = $logStorage->initializeConversation($conversation_id, $model);
+			$conversation_id = $logStorage->initializeConversation( $conversation_id, $model );
 		}
 		if ( $system ) {
-			$logStorage->writeSystemPrompt($conversation_id, $system, $system_prompt_name);
+			$logStorage->writeSystemPrompt( $conversation_id, $system, $system_prompt_name );
 			$system = false;
 		}
 		$conversation_initialized = true;
@@ -1064,7 +1304,6 @@ while ( true ) {
 								continue 2;
 							}
 						}
-
 					}
 
 					if ( ! in_array( $base_dir, $already_asked ) ) {
@@ -1146,10 +1385,10 @@ while ( true ) {
 		// Persist history unless prepended by whitespace.
 		readline_write_history( $readline_history_file );
 		if ( $system ) {
-			$logStorage->writeSystemPrompt($conversation_id, $system, $system_prompt_name);
+			$logStorage->writeSystemPrompt( $conversation_id, $system, $system_prompt_name );
 			$system = false;
 		}
-		$logStorage->writeUserMessage($conversation_id, $input);
+		$logStorage->writeUserMessage( $conversation_id, $input );
 	}
 
 	$image = false;
@@ -1159,7 +1398,7 @@ while ( true ) {
 			if ( ! filter_var( $image, FILTER_VALIDATE_URL ) ) {
 				if ( ! file_exists( $image ) ) {
 					echo 'Image file not found: ', $image, PHP_EOL;
-					exit(1);
+					exit( 1 );
 				} else {
 					$mime = mime_content_type( $image );
 					$image = 'data:' . $mime . ';base64,' . base64_encode( file_get_contents( $image ) );
@@ -1167,7 +1406,7 @@ while ( true ) {
 			}
 		} else {
 			echo 'Image input is only supported with gpt-4o* or llava.', PHP_EOL;
-			exit(1);
+			exit( 1 );
 		}
 	}
 
@@ -1178,7 +1417,7 @@ while ( true ) {
 				'text' => $input,
 			),
 			array(
-				'type' => 'image_url',
+				'type'      => 'image_url',
 				'image_url' => array(
 					'url' => $image,
 				),
@@ -1208,7 +1447,7 @@ while ( true ) {
 		$ch,
 		CURLOPT_POSTFIELDS,
 		json_encode(
-		$wrapper
+			$wrapper
 		)
 	);
 
@@ -1257,7 +1496,7 @@ while ( true ) {
 	}
 	if ( $stdin || ltrim( $input ) === $input ) {
 		// Persist history unless prepended by whitespace or coming from stdin.
-		$logStorage->writeAssistantMessage($conversation_id, $message);
+		$logStorage->writeAssistantMessage( $conversation_id, $message );
 	}
 
 	if ( isset( $options['v'] ) ) {
@@ -1272,7 +1511,7 @@ while ( true ) {
 					$t = ', ';
 				}
 			}
-		echo PHP_EOL;
+			echo PHP_EOL;
 		}
 	}
 
