@@ -1,11 +1,12 @@
 <?php
+require_once __DIR__ . '/LogStorage.php';
+
 $version = '1.1.2';
 $openai_key = getenv( 'OPENAI_API_KEY', true );
 $anthropic_key = getenv( 'ANTHROPIC_API_KEY', true );
-$supported_models = array();
 $ansi = function_exists( 'posix_isatty' ) && posix_isatty( STDOUT );
 
-$options = getopt( 'ds:li:p:vhfm:r:', array( 'help', 'version' ), $initial_input );
+$options = getopt( 'ds:li:p:vhfm:r:w::', array( 'help', 'version', 'webui' ), $initial_input );
 
 if ( ! isset( $options['m'] ) ) {
 	putenv('RES_OPTIONS=retrans:1 retry:1 timeout:1 attempts:1');
@@ -258,47 +259,89 @@ function output_message( $message ) {
 readline_completion_function("dont_auto_complete");
 
 $readline_history_file = __DIR__ . '/.history';
-$history_base_directory = __DIR__ . '/chats/';
-if ( ! file_exists( $history_base_directory ) ) {
-	if ( ! mkdir( $history_base_directory ) ) {
-		echo 'Could not create history directory: ', $history_base_directory, PHP_EOL;
-		exit( 1 );
+$chats_base_directory = __DIR__ . '/chats/';
+$sqlite_db_path = __DIR__ . '/chats.sqlite';
+$time = time();
+
+// Initialize log storage - prefer SQLite, fallback to file storage
+try {
+	if (class_exists('PDO') && in_array('sqlite', PDO::getAvailableDrivers())) {
+		$logStorage = new SQLiteLogStorage($sqlite_db_path);
+		$storage_type = 'SQLite';
+	} else {
+		$logStorage = new FileLogStorage($chats_base_directory);
+		$storage_type = 'File';
+	}
+} catch (Exception $e) {
+	// Fallback to file storage if SQLite fails
+	try {
+		$logStorage = new FileLogStorage($chats_base_directory);
+		$storage_type = 'File (fallback)';
+	} catch (Exception $e2) {
+		echo 'Error initializing log storage: ', $e2->getMessage(), PHP_EOL;
+		exit(1);
 	}
 }
-$time = time();
-$history_directory = $history_base_directory . date( 'Y/m', $time );
+
 
 $system = false;
 
-if ( $online && ! empty( $openai_key ) ) {
-	// curl_setopt( $ch, CURLOPT_URL, 'https://api.openai.com/v1/models' );
-	// curl_setopt(
-	// 	$ch,
-	// 	CURLOPT_HTTPHEADER,
-	// 	array(
-	// 		'Content-Type: application/json',
-	// 		'Authorization: Bearer ' . $openai_key,
-	// 	)
-	// );
-
-	// $response = curl_exec($ch);
-	// $data = json_decode($response, true);
-
-	// foreach ($data['data'] as $model) {
-	// 	if ( false !== strpos( $model['id'], 'gpt' ) ) {
-	//     $supported_models[ $model['id'] ]  = 'OpenAI';
-	// 	}
-	// }
-
-	$supported_models['gpt-3.5-turbo'] = 'OpenAI';
-	$supported_models['gpt-3.5-turbo-16k'] = 'OpenAI';
-	$supported_models['gpt-4o-mini'] = 'OpenAI';
-	$supported_models['gpt-4o'] = 'OpenAI';
+$supported_models = array();
+$supported_models_file = __DIR__ . '/supported-models.json';
+if ( file_exists( $supported_models_file ) ) {
+	$supported_models = json_decode( file_get_contents( $supported_models_file ), true );
+	if ( ! is_array( $supported_models ) ) {
+		$supported_models = array();
+	}
+} else {
+	// Update the models.
+	$options['m'] = '';
 }
 
-if ( $online && ! empty( $anthropic_key ) ) {
-	$supported_models['claude-3-5-sonnet-20240620'] = 'Anthropic';
-	$supported_models['claude-3-haiku-20240307'] = 'Anthropic';
+if ( $online && isset( $options['m'] ) && $options['m'] == '' ) {
+	// Update models.
+	if ( ! empty( $openai_key ) ) {
+		curl_setopt( $ch, CURLOPT_URL, 'https://api.openai.com/v1/models' );
+		curl_setopt(
+			$ch,
+			CURLOPT_HTTPHEADER,
+			array(
+				'Content-Type: application/json',
+				'Authorization: Bearer ' . $openai_key,
+			)
+		);
+
+		$response = curl_exec($ch);
+		$data = json_decode($response, true);
+
+		foreach ($data['data'] as $model) {
+			if ( 0 === strpos( $model['id'], 'gpt' ) ) {
+				$supported_models[ $model['id'] ]  = 'OpenAI';
+			}
+		}
+	}
+	if ( ! empty( $anthropic_key ) ) {
+		curl_setopt( $ch, CURLOPT_URL, 'https://api.anthropic.com/v1/models' );
+		curl_setopt(
+			$ch,
+			CURLOPT_HTTPHEADER,
+			array(
+				'x-api-key: ' . $anthropic_key,
+				'anthropic-version: 2023-06-01',
+				'Content-Type: application/json',
+			)
+		);
+		$response = curl_exec($ch);
+		$data = json_decode($response, true);
+
+		foreach ( $data['data'] as $model ) {
+			if ( $model['type'] === 'model' && 0 === strpos( $model['id'], 'claude' ) ) {
+				$supported_models[ $model['id'] ] = 'Anthropic';
+			}
+		}
+	}
+
+	file_put_contents( $supported_models_file, json_encode( $supported_models, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ) );
 }
 
 curl_setopt( $ch, CURLOPT_URL, 'http://localhost:11434/api/tags' );
@@ -306,6 +349,55 @@ $ollama_models = json_decode( curl_exec( $ch ), true );
 if ( isset( $ollama_models['models'] ) ) {
 	foreach ( $ollama_models['models'] as $m ) {
 		$supported_models[ $m['name'] ] = 'Ollama (local)';
+	}
+}
+
+// Handle webui option before checking for supported models
+if ( isset( $options['w'] ) || isset( $options['webui'] ) ) {
+	$port = 8381; // default port
+	if ( isset( $options['w'] ) ) {
+		if ( $options['w'] !== false && is_numeric( $options['w'] ) ) {
+			$port = $options['w'];
+		}
+	}
+	$host = 'localhost';
+	$url = "http://{$host}:{$port}";
+
+	echo "Starting web UI on {$url}...", PHP_EOL;
+
+	// Check if port is available
+	$socket = @fsockopen($host, $port, $errno, $errstr, 1);
+	if ($socket) {
+		fclose($socket);
+		echo "Port {$port} is already in use. Trying to open browser anyway...", PHP_EOL;
+		exec("open '{$url}'");
+		exit(0);
+	}
+
+	// Start PHP built-in server in background
+	$command = "php -S {$host}:{$port} -t " . escapeshellarg(__DIR__) . " > /dev/null 2>&1 &";
+	exec($command);
+
+	// Give server time to start
+	sleep(1);
+
+	// Verify server started
+	$socket = @fsockopen($host, $port, $errno, $errstr, 2);
+	if (!$socket) {
+		echo "Failed to start web server on port {$port}: {$errstr}", PHP_EOL;
+		exit(1);
+	}
+	fclose($socket);
+
+	// Open browser
+	exec("open '{$url}'");
+	echo "Web UI started at {$url}", PHP_EOL;
+	echo "Server running in background. Press Ctrl+C to stop it.", PHP_EOL;
+
+	// Keep script running to show the message
+	while (true) {
+		sleep(3600); // Sleep for 1 hour, then repeat message
+		echo "Web UI still running at {$url} (Press Ctrl+C to exit)", PHP_EOL;
 	}
 }
 
@@ -354,7 +446,7 @@ if ( isset( $options['h'] ) || isset( $options['help'] ) ) {
 	$offline = ! $online ? "(we're offline)" : '';
 	$self = basename( $_SERVER['argv'][0] );
 	echo <<<USAGE
-Usage: $self [-l] [-f] [-r [number|searchterm]] [-m model] [-s system_prompt] [-i input_file_s] [-p picture_file] [conversation_input]
+Usage: $self [-l] [-f] [-r [number|searchterm]] [-m model] [-s system_prompt] [-i input_file_s] [-p picture_file] [-w port|--webui] [conversation_input]
 
 Options:
   -l                 Resume last conversation.
@@ -366,6 +458,7 @@ Options:
   -i input_file(s)   Read these files and add them to the prompt.
   -p picture_file    Add an picture as input (only gpt-4o).
   -s system_prompt   Specify a system prompt preceeding the conversation.
+  -w port|--webui    Launch web UI on specified port (default: 8080) and open browser.
 
 Arguments:
   conversation_input  Input for the first conversation.
@@ -393,6 +486,12 @@ Example usage:
   $self Tell me a joke
     Starts a new conversation with the given message.
 
+  $self -w 8080
+    Launch web UI on port 8080 and open browser.
+
+  $self --webui
+    Launch web UI on default port 8080 and open browser.
+
   $self -m gpt-3.5-turbo-16k
     Use a ChatGPT model with 16k tokens instead of 4k.
     Supported modes: $supported_models_list $offline
@@ -416,8 +515,6 @@ if ( $stat['size'] > 0 ) {
 	$ansi = false;
 }
 fclose( $fp_stdin );
-
-$fp = false;
 
 if ( isset( $options['m'] ) ) {
 	$model = false;
@@ -453,9 +550,11 @@ $wrapper = array(
 
 if ( $ansi || isset( $options['v'] ) ) {
 	fprintf( STDERR, 'Model: ' . $model . ' via ' . $model_provider . ( isset( $options['v'] ) ? ' (verbose)' : '' ) . PHP_EOL );
+	fprintf( STDERR, 'Storage: ' . $storage_type . PHP_EOL );
 }
 
-$full_history_file = $history_directory . '/history.' . $time . '.' . preg_replace( '/[^a-z0-9]+/', '-', $model ) . '.txt';
+// For SQLite, we'll let it auto-generate the ID. For file storage, we use timestamp.
+$conversation_id = ($storage_type === 'SQLite') ? null : $time;
 
 if ( isset( $options['l'] ) ) {
 	$options['r'] = 1;
@@ -466,42 +565,105 @@ $last_conversations = array();
 
 if ( isset( $options['r'] ) ) {
 	$search = false;
+	$specific_conversation_id = false;
+
 	if ( ! is_numeric( $options['r'] ) ) {
 		$search = $options['r'];
 		$options['r'] = 10;
+	} else {
+		// Check if this is a specific conversation ID by trying to load it
+		$test_conversation = null;
+		if ($storage_type === 'SQLite') {
+			$test_conversation = $logStorage->getConversationMetadata($options['r']);
+		} else {
+			// For file storage, we need to find the file first
+			$test_file = null;
+			$historyDirectory = __DIR__ . '/chats/' . date('Y/m', $options['r']);
+			$pattern = $historyDirectory . '/history.' . $options['r'] . '*.txt';
+			$files = glob($pattern);
+			if ($files) {
+				$test_file = $files[0];
+				$test_conversation = $logStorage->getConversationMetadata($test_file);
+			}
+		}
+
+		if ($test_conversation) {
+			$specific_conversation_id = $options['r'];
+			$conversations = array($specific_conversation_id => null);
+		} else {
+			$options['r'] = intval( $options['r'] );
+			if ( $options['r'] <= 0 ) {
+				$options['r'] = 10;
+			}
+		}
 	}
 
-	$options['r'] = intval( $options['r'] );
-	if ( $options['r'] <= 0 ) {
-		$options['r'] = 10;
-	}
-	$history_files = array();
-	for ( $i = 0; $i > -300; $i -= 20 ) {
-		$more_history_files = array_flip( glob( $history_base_directory . date( 'Y/m', $time - $i ) . '/history.*' ) );
-		if ( $search ) {
-			$more_history_files = array_filter( $more_history_files, function( $file ) use ( $search ) {
-				$file_contents = file_get_contents( $file );
-				return false !== stripos( $file_contents, $search );
-			}, ARRAY_FILTER_USE_KEY );
+	if (!$specific_conversation_id) {
+		$conversation_list = $logStorage->findConversations($options['r'] * 10, $search);
+		$conversations = array();
+		foreach ($conversation_list as $conversation_key) {
+			$conversations[$conversation_key] = null; // Will be loaded later
 		}
-		$history_files = array_merge( $history_files, $more_history_files );
-		if ( count( $history_files ) >= $options['r'] ) {
-			break;
+	} else {
+		// For specific conversation ID, we need to load the conversation data
+		if ($storage_type === 'SQLite') {
+			$conversation_data = $logStorage->loadConversation($specific_conversation_id);
+			// Convert SQLite format to simple array format
+			if ($conversation_data && is_array($conversation_data)) {
+				$simple_split = [];
+				foreach ($conversation_data as $msg) {
+					if (is_array($msg) && isset($msg['content'])) {
+						$simple_split[] = $msg['content'];
+					} else {
+						$simple_split[] = $msg;
+					}
+				}
+				$conversations[$specific_conversation_id] = $simple_split;
+			} else {
+				echo 'Conversation not found or empty.', PHP_EOL;
+				exit(1);
+			}
+		} else {
+			// For file storage, find the actual file path
+			$historyDirectory = __DIR__ . '/chats/' . date('Y/m', $specific_conversation_id);
+			$pattern = $historyDirectory . '/history.' . $specific_conversation_id . '*.txt';
+			$files = glob($pattern);
+			if ($files) {
+				$file_path = $files[0];
+				$conversation_data = $logStorage->loadConversation($file_path);
+				if ($conversation_data) {
+					$conversations[$file_path] = $conversation_data;
+					// Use file path as key for file storage
+					$specific_conversation_id = $file_path;
+				} else {
+					echo 'Conversation not found or empty.', PHP_EOL;
+					exit(1);
+				}
+			} else {
+				echo 'Conversation file not found.', PHP_EOL;
+				exit(1);
+			}
 		}
-	}
-	krsort( $history_files );
 
-	$length = $options['r'];
+		// Set up for direct resume
+		$last_conversations = array(1 => $specific_conversation_id);
+	}
+
+	$length = is_numeric($options['r']) ? $options['r'] : 10;
 	if ( isset( $options['l'] ) ) {
 		echo 'Resuming the last conversation.', PHP_EOL;
 	} else {
-		echo 'Resuming a conversation. ';
+		if ($specific_conversation_id) {
+			echo 'Resuming conversation ID: ', ($storage_type === 'SQLite' ? $specific_conversation_id : basename($specific_conversation_id, '.txt')), PHP_EOL;
+		} else {
+			echo 'Resuming a conversation. ';
+		}
 	}
-	$sel = 'm';
+	$sel = $specific_conversation_id ? 1 : 'm';
 	$c = 0;
 	while ( 'm' === $sel ) {
-		$last_history_files = array_slice( array_keys( $history_files ), $c, $length );
-		if ( empty( $last_history_files ) ) {
+		$current_conversation_batch = array_slice( array_keys( $conversations ), $c, $length );
+		if ( empty( $current_conversation_batch ) ) {
 			if ( $c ) {
 				echo 'No more conversations.', PHP_EOL;
 			} else {
@@ -515,12 +677,19 @@ if ( isset( $options['r'] ) ) {
 			echo 'Please choose one: ', PHP_EOL;
 		}
 
-		if ( !empty( $last_history_files ) ) {
+		if ( !empty( $current_conversation_batch ) ) {
 			$length = 10;
-			foreach ( $last_history_files as $k => $last_history_file ) {
-				$filename_parts = explode( '.', $last_history_file );
-				$used_model = $filename_parts[2];
-				if ( 'txt' === $used_model ) {
+			foreach ( $current_conversation_batch as $k => $conversation_key ) {
+				// Get conversation metadata from storage
+				$metadata = $logStorage->getConversationMetadata($conversation_key);
+				if (!$metadata) {
+					unset( $conversations[ $conversation_key ] );
+					unset( $current_conversation_batch[ $k ] );
+					continue;
+				}
+
+				$used_model = $metadata['model'];
+				if ( 'txt' === $used_model || empty($used_model) ) {
 					$used_model = '';
 				} else {
 					if ( ! isset( $options['m'] ) ) {
@@ -529,8 +698,9 @@ if ( isset( $options['r'] ) ) {
 					}
 					$used_model .= ', ';
 				}
+				
 				$ago = '';
-				$unix_timestamp = $filename_parts[1];
+				$unix_timestamp = $metadata['timestamp'];
 				if ( is_numeric( $unix_timestamp ) ) {
 					$ago_in_seconds = $time - $unix_timestamp;
 					if ( $ago_in_seconds > 60 * 60 * 24 ) {
@@ -543,26 +713,35 @@ if ( isset( $options['r'] ) ) {
 						$ago = $ago_in_seconds . 's ago, ';
 					}
 				}
-				$conversation_contents = file_get_contents( $last_history_file );
-				$split = preg_split( '/^>(?: ([^\n]*)|>> (.*)\n\.)\n\n/ms', trim( $conversation_contents ), -1, PREG_SPLIT_DELIM_CAPTURE );
-				$split = array_filter( $split );
-				$split = array_values( $split );
 
-				if ( count( $split ) < 2 ) {
-					// echo 'Empty history file: ', $last_history_file, PHP_EOL;
-					unset( $history_files[ $last_history_file ] );
-					unset( $last_history_files[ $k ] );
+				// Load conversation data differently based on storage type
+				if ($storage_type === 'SQLite') {
+					$split = $logStorage->loadConversation($conversation_key);
+					// Convert SQLite format to simple array format expected by the rest of the code
+					if ($split && is_array($split)) {
+						$simple_split = [];
+						foreach ($split as $msg) {
+							if (is_array($msg) && isset($msg['content'])) {
+								$simple_split[] = $msg['content'];
+							} else {
+								$simple_split[] = $msg;
+							}
+						}
+						$split = $simple_split;
+					}
+				} else {
+					// File storage expects file path
+					$split = $logStorage->loadConversation($conversation_key);
+				}
+
+				if (!$split || count($split) < 2) {
+					unset( $conversations[ $conversation_key ] );
+					unset( $current_conversation_batch[ $k ] );
 					continue;
 				}
-				$s = array_shift( $split );
-				if ( substr( $s, 0, 7 ) === 'System:' ) {
-					$split[0] = $s . $split[0];
-				} else {
-					array_unshift( $split, $s );
-				}
 
-				$history_files[ $last_history_file ] = $split;
-				$answers = intval( count( $history_files[ $last_history_file ] ) / 2 );
+				$conversations[ $conversation_key ] = $split;
+				$answers = $metadata['answers'];
 
 				$c = $c + 1;
 
@@ -572,7 +751,17 @@ if ( isset( $options['r'] ) ) {
 					if ( $ansi ) {
 						echo "\033[1m";
 					}
-					echo ltrim( str_replace( PHP_EOL, ' ', substr( $history_files[ $last_history_file ][0], 0, 100 ) ), '> ' );
+					$first_message = $conversations[ $conversation_key ][0];
+					if (is_array($first_message) && isset($first_message['content'])) {
+						$first_message = $first_message['content'];
+					}
+					if (substr($first_message, 0, 7) === 'System:') {
+						$first_message = isset($conversations[ $conversation_key ][1]) ? $conversations[ $conversation_key ][1] : '';
+						if (is_array($first_message) && isset($first_message['content'])) {
+							$first_message = $first_message['content'];
+						}
+					}
+					echo ltrim( str_replace( PHP_EOL, ' ', substr( $first_message, 0, 100 ) ), '> ' );
 					if ( $ansi ) {
 						echo "\033[0m";
 						echo PHP_EOL;
@@ -581,19 +770,19 @@ if ( isset( $options['r'] ) ) {
 						echo ' (';
 					}
 				}
-				echo $ago, $used_model, $answers, ' answer', $answers === 1 ? '' : 's', ', ', str_word_count( $conversation_contents ), ' words';
+				echo $ago, $used_model, $answers, ' answer', $answers === 1 ? '' : 's', ', ', $metadata['word_count'], ' words';
 				if ( ! $ansi ) {
 					echo ')';
 				}
 				echo PHP_EOL;
 
-				$last_conversations[ $c ] = $last_history_file;
+				$last_conversations[ $c ] = $conversation_key;
 				if ( isset( $options['l'] ) ) {
 					break;
 				}
 			}
 
-			krsort( $history_files );
+			krsort( $conversations );
 			if ( $c < $options['r'] ) {
 				continue;
 			}
@@ -604,13 +793,13 @@ if ( isset( $options['r'] ) ) {
 			break;
 		}
 
-		if ( 1 === count( $last_history_files ) ) {
+		if ( 1 === count( $current_conversation_batch ) ) {
 			echo 'Resume this conversation (m for more): ';
 		} else {
 			echo 'Please enter the number of the conversation you want to resume (m for more): ';
 		}
 		$sel = readline();
-		if ( 1 === count( $last_history_files ) ) {
+		if ( 1 === count( $current_conversation_batch ) ) {
 			if ( $sel < 0 || 'y' === $sel ) {
 				$sel = 1;
 			} else {
@@ -621,10 +810,29 @@ if ( isset( $options['r'] ) ) {
 	if ( $sel ) {
 		if ( ! isset( $last_conversations[ $sel ] ) ) {
 			echo 'Invalid selection.', PHP_EOL;
+			exit(1);
 		}
-		if ( substr( $history_files[ $last_conversations[ $sel ] ][ 0 ], 0, 7 ) === 'System:' ) {
-			$system = substr( $history_files[ $last_conversations[ $sel ] ][ 0 ], 8, strpos( $history_files[ $last_conversations[ $sel ] ][ 0 ], PHP_EOL ) - 8 );
-			$history_files[ $last_conversations[ $sel ] ][ 0 ]	= substr( $history_files[ $last_conversations[ $sel ] ][ 0 ], strlen( $system ) + 9 );
+
+		$conversation_key = $last_conversations[ $sel ];
+		if ( ! isset( $conversations[ $conversation_key ] ) || ! is_array( $conversations[ $conversation_key ] ) ) {
+			echo 'Conversation data not found.', PHP_EOL;
+			exit(1);
+		}
+
+		$first_message = $conversations[ $conversation_key ][ 0 ];
+		$first_content = is_array($first_message) && isset($first_message['content']) ? $first_message['content'] : $first_message;
+
+		if ( substr( $first_content, 0, 7 ) === 'System:' ) {
+			$system = substr( $first_content, 8, strpos( $first_content, PHP_EOL ) - 8 );
+			$remaining_content = substr( $first_content, strlen( $system ) + 9 );
+
+			// Update the first message with the remaining content
+			if (is_array($conversations[ $conversation_key ][ 0 ])) {
+				$conversations[ $conversation_key ][ 0 ]['content'] = $remaining_content;
+			} else {
+				$conversations[ $conversation_key ][ 0 ] = $remaining_content;
+			}
+
 			if ( isset( $options['s'] ) && $options['s'] ) {
 				echo 'Old System prompt: ' . $system, PHP_EOL, 'New ';
 				$system = $options['s'];
@@ -639,21 +847,25 @@ if ( isset( $options['r'] ) ) {
 				) );
 			}
 		}
-		foreach ( $history_files[ $last_conversations[ $sel ] ] as $k => $message ) {
+		$conversation_data = $conversations[ $conversation_key ];
+		foreach ( $conversation_data as $k => $message ) {
 			if ( isset( $options['d'] ) && $k % 2 ) {
 				// Ignore assistant answers.
 				continue;
 			}
 
+			// Handle both string messages and array format from SQLite
+			$content = is_array($message) && isset($message['content']) ? $message['content'] : $message;
+
 			$messages[] = array(
 				'role'    => $k % 2 ? 'assistant' : 'user',
-				'content' => $message,
+				'content' => $content,
 			);
 
 			if ( 0 === $k % 2 ) {
 				echo '> ';
 			}
-			output_message( $message . PHP_EOL );
+			output_message( $content . PHP_EOL );
 		}
 		if ( isset( $options['d'] ) ) {
 			$initial_input = ' ';
@@ -814,21 +1026,30 @@ while ( true ) {
 	}
 
 	readline_add_history( $input );
-	if ( ! $fp ) {
-		if ( ! file_exists( $history_directory ) ) {
-			mkdir( $history_directory, 0777, true );
-		}
-
+	static $conversation_initialized = false;
+	if ( ! $conversation_initialized ) {
 		if ( $sel && $last_conversations && isset( $last_conversations[ $sel ] ) ) {
-			copy( $last_conversations[ $sel ], $full_history_file );
+			$source_key = $last_conversations[ $sel ];
+			
+			// Extract conversation ID depending on storage type
+			if ($storage_type === 'SQLite') {
+				$conversation_id = $source_key; // Use existing conversation ID
+			} else {
+				// File storage - extract from filename
+				$source_conversation_id = basename($source_key, '.txt');
+				$source_conversation_id = preg_replace('/^history\.(\d+)\..*$/', '$1', $source_conversation_id);
+				$conversation_id = $source_conversation_id; // Use existing conversation ID
+			}
 
 			if ( $system ) {
-				file_put_contents( $full_history_file, 'System: ' . $system  . PHP_EOL . trim( preg_replace( '/^System: .*$/m', '', file_get_contents( $full_history_file ) ) ) );
+				$logStorage->writeSystemPrompt($conversation_id, $system);
 				$system = false;
 			}
+		} else {
+			// Only initialize new conversation if not resuming
+			$conversation_id = $logStorage->initializeConversation($conversation_id, $model);
 		}
-
-		$fp = fopen( $full_history_file, 'a' );
+		$conversation_initialized = true;
 	}
 
 	if ( isset( $options['i'] ) ) {
@@ -954,14 +1175,10 @@ while ( true ) {
 		// Persist history unless prepended by whitespace.
 		readline_write_history( $readline_history_file );
 		if ( $system ) {
-			fwrite( $fp, 'System: ' . $system . PHP_EOL );
+			$logStorage->writeSystemPrompt($conversation_id, $system);
 			$system = false;
 		}
-		if ( false === strpos( $input, PHP_EOL ) ) {
-			fwrite( $fp, '> ' . $input . PHP_EOL . PHP_EOL );
-		} else {
-			fwrite( $fp, '>>> ' . $input . PHP_EOL . '.' . PHP_EOL . PHP_EOL );
-		}
+		$logStorage->writeUserMessage($conversation_id, $input);
 	}
 
 	$image = false;
@@ -1069,7 +1286,7 @@ while ( true ) {
 	}
 	if ( $stdin || ltrim( $input ) === $input ) {
 		// Persist history unless prepended by whitespace or coming from stdin.
-		fwrite( $fp, $message . PHP_EOL . PHP_EOL );
+		$logStorage->writeAssistantMessage($conversation_id, $message);
 	}
 
 	if ( isset( $options['v'] ) ) {
@@ -1092,6 +1309,4 @@ while ( true ) {
 		break;
 	}
 }
-if ( $fp ) {
-	fclose( $fp );
-}
+$logStorage->close();

@@ -1,3 +1,7 @@
 .history
+supported-models.json
 chats
 talks
+chats.sqlite
+chatgpt.code-workspace
+dalle
