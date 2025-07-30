@@ -1,7 +1,7 @@
 <?php
-require_once 'LogStorage.php';
+require_once __DIR__ . '/includes/LogStorage.php';
 
-$dbPath = 'chats.sqlite';
+$dbPath = __DIR__ . '/chats.sqlite';
 if ( ! file_exists( $dbPath ) ) {
 	die( "Database file not found: $dbPath" );
 }

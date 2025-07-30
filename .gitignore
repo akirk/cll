@@ -5,3 +5,5 @@ talks
 chats.sqlite
 chatgpt.code-workspace
 dalle
+vendor
+composer.lock
