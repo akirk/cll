@@ -287,7 +287,7 @@ try {
 $system = false;
 
 $supported_models = array();
-$supported_models_file = __DIR__ . '/supported_models.json';
+$supported_models_file = __DIR__ . '/supported-models.json';
 if ( file_exists( $supported_models_file ) ) {
 	$supported_models = json_decode( file_get_contents( $supported_models_file ), true );
 	if ( ! is_array( $supported_models ) ) {
