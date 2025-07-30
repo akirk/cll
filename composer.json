@@ -1,6 +1,6 @@
 {
-    "name": "alex/chatgpt",
-    "description": "ChatGPT CLI tool",
+    "name": "alex/cll",
+    "description": "LLM CLI tool",
     "type": "project",
     "require-dev": {
         "phpunit/phpunit": "^10.0"
