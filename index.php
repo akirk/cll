@@ -12,6 +12,7 @@ $action = $_GET['action'] ?? 'list';
 $conversationId = $_GET['id'] ?? null;
 $search = $_GET['search'] ?? null;
 $selectedTag = $_GET['tag'] ?? null;
+$systemPromptId = $_GET['prompt_id'] ?? null;
 
 // Handle AJAX request for loading more conversations
 if (isset($_GET['ajax']) && $_GET['ajax'] === 'load_more') {
@@ -85,6 +86,76 @@ if ($_POST['delete_action'] ?? null) {
     }
 }
 
+// Handle system prompt management actions
+if ($_POST['prompt_action'] ?? null) {
+    $promptAction = $_POST['prompt_action'];
+
+    switch ($promptAction) {
+        case 'create':
+            $name = trim($_POST['prompt_name'] ?? '');
+            $prompt = trim($_POST['prompt_content'] ?? '');
+            $description = trim($_POST['prompt_description'] ?? '');
+            $isDefault = isset($_POST['is_default']);
+
+            if ($name && $prompt) {
+                $result = $storage->createSystemPrompt($name, $prompt, $description, $isDefault);
+                if ($result) {
+                    header("Location: ?action=system_prompts&success=created");
+                    exit;
+                } else {
+                    $promptError = "Failed to create system prompt. Name might already exist.";
+                }
+            } else {
+                $promptError = "Name and prompt content are required.";
+            }
+            break;
+
+        case 'update':
+            $id = intval($_POST['prompt_id'] ?? 0);
+            $name = trim($_POST['prompt_name'] ?? '');
+            $prompt = trim($_POST['prompt_content'] ?? '');
+            $description = trim($_POST['prompt_description'] ?? '');
+            $isDefault = isset($_POST['is_default']);
+
+            if ($id && $name && $prompt) {
+                $result = $storage->updateSystemPrompt($id, $name, $prompt, $description, $isDefault);
+                if ($result) {
+                    header("Location: ?action=system_prompts&success=updated");
+                    exit;
+                } else {
+                    $promptError = "Failed to update system prompt. Name might already exist.";
+                }
+            } else {
+                $promptError = "All fields are required.";
+            }
+            break;
+
+        case 'delete':
+            $id = intval($_POST['prompt_id'] ?? 0);
+            if ($id) {
+                if ($storage->deleteSystemPrompt($id)) {
+                    header("Location: ?action=system_prompts&success=deleted");
+                    exit;
+                } else {
+                    $promptError = "Failed to delete system prompt.";
+                }
+            }
+            break;
+
+        case 'set_default':
+            $id = intval($_POST['prompt_id'] ?? 0);
+            if ($id) {
+                if ($storage->setDefaultSystemPrompt($id)) {
+                    header("Location: ?action=system_prompts&success=default_set");
+                    exit;
+                } else {
+                    $promptError = "Failed to set default system prompt.";
+                }
+            }
+            break;
+    }
+}
+
 function renderConversationItem($storage, $id) {
     $metadata = $storage->getConversationMetadata($id);
     if (!$metadata) return '';
@@ -92,18 +163,18 @@ function renderConversationItem($storage, $id) {
     $messages = $storage->loadConversation($id);
     $firstMessage = '';
     if ($messages && !empty($messages)) {
-        $firstMsg = $messages[0];
-        if (is_array($firstMsg)) {
-            $firstMessage = $firstMsg['content'];
-        } else {
-            $firstMessage = $firstMsg;
-        }
-        if (strpos($firstMessage, 'System: ') === 0) {
-            $systemEnd = strpos($firstMessage, "\n");
-            if ($systemEnd !== false) {
-                $firstMessage = substr($firstMessage, $systemEnd + 1);
+        // Skip system message if it's the first message, show the first user message instead
+        $firstUserMessage = null;
+        foreach ($messages as $msg) {
+            $content = is_array($msg) ? $msg['content'] : $msg;
+            $role = is_array($msg) ? $msg['role'] : 'unknown';
+            
+            if ($role === 'user') {
+                $firstUserMessage = $content;
+                break;
             }
         }
+        $firstMessage = $firstUserMessage ?: '';
     }
     $preview = strlen($firstMessage) > 100 ? substr($firstMessage, 0, 100) . '...' : $firstMessage;
 
@@ -121,7 +192,9 @@ function renderConversationItem($storage, $id) {
         $html .= '<div class="tags">';
         foreach (explode(',', $metadata['tags']) as $tag) {
             $trimmedTag = trim($tag);
-            $html .= '<a href="?action=list&tag=' . urlencode($trimmedTag) . '" class="tag">' . htmlspecialchars($trimmedTag) . '</a>';
+            $isSystemTag = (strpos($trimmedTag, 'system') === 0);
+            $tagClass = $isSystemTag ? 'tag system-tag' : 'tag';
+            $html .= '<a href="?action=list&tag=' . urlencode($trimmedTag) . '" class="' . $tagClass . '">' . htmlspecialchars($trimmedTag) . '</a>';
         }
         $html .= '</div>';
     }
@@ -255,7 +328,7 @@ function processInlineFormatting($text) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Chat Viewer</title>
+    <title>cll Web Interface</title>
     <style>
         body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }
         .container { max-width: 1200px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
@@ -296,6 +369,8 @@ function processInlineFormatting($text) {
         .tags { margin-top: 8px; }
         .tag { display: inline-block; background: #e0e0e0; color: #333; padding: 2px 6px; border-radius: 3px; font-size: 0.8em; margin-right: 5px; text-decoration: none; }
         .tag:hover { background: #d0d0d0; }
+        .tag.system-tag { background: #ff9800; color: white; }
+        .tag.system-tag:hover { background: #f57c00; }
         .tag-editor { background: #f9f9f9; padding: 15px; border-radius: 6px; margin: 15px 0; border: 1px solid #ddd; display: none; }
         .tag-editor.visible { display: block; }
         .toggle-tags-btn {
@@ -402,6 +477,12 @@ function processInlineFormatting($text) {
             background: #005a8b;
             transform: scale(1.1);
         }
+        .tag-cloud-item.system-tag {
+            background: #ff9800;
+        }
+        .tag-cloud-item.system-tag:hover {
+            background: #f57c00;
+        }
         .tag-cloud-size-1 { font-size: 0.8em; opacity: 0.7; }
         .tag-cloud-size-2 { font-size: 0.9em; opacity: 0.8; }
         .tag-cloud-size-3 { font-size: 1.0em; opacity: 0.9; }
@@ -413,10 +494,11 @@ function processInlineFormatting($text) {
 <body>
     <div class="container">
         <div class="header">
-            <h1><a href="?action=list">Chat Viewer</a></h1>
+            <h1><a href="?action=list">cll Web Interface</a></h1>
             <div class="nav">
                 <a href="?action=list">All Conversations</a>
                 <a href="?action=stats">Statistics</a>
+                <a href="?action=system_prompts">System Prompts</a>
             </div>
         </div>
 
@@ -468,8 +550,11 @@ function processInlineFormatting($text) {
                 <?php if (!empty($conversationTags)): ?>
                     <div style="margin: 15px 0;">
                         <strong>Tags:</strong>
-                        <?php foreach ($conversationTags as $tag): ?>
-                            <a href="?action=list&tag=<?= urlencode($tag) ?>" class="tag" style="margin-left: 8px;"><?= htmlspecialchars($tag) ?></a>
+                        <?php foreach ($conversationTags as $tag): 
+                            $isSystemTag = (strpos($tag, 'system') === 0);
+                            $tagClass = $isSystemTag ? 'tag system-tag' : 'tag';
+                        ?>
+                            <a href="?action=list&tag=<?= urlencode($tag) ?>" class="<?= $tagClass ?>" style="margin-left: 8px;"><?= htmlspecialchars($tag) ?></a>
                         <?php endforeach; ?>
                     </div>
                 <?php endif; ?>
@@ -565,59 +650,37 @@ function processInlineFormatting($text) {
                             $role = 'unknown';
                         }
                         
-                        // Handle mixed system/user message
-                        if ($role === 'mixed' && strpos($content, 'System: ') === 0) {
-                            $systemEnd = strpos($content, "\n");
-                            if ($systemEnd !== false) {
-                                $systemContent = substr($content, 8, $systemEnd - 8);
-                                $userContent = substr($content, $systemEnd + 1);
-                                
-                                // Display system message
-                                echo '<div class="message system">
-                                        <div class="message-header">
-                                            <div class="message-role">system</div>
-                                            <div class="message-timestamp">' . ($timestamp ? date('Y-m-d H:i:s', $timestamp) : '') . '</div>
-                                        </div>
-                                        <div class="message-content">' . renderMarkdown($systemContent) . '</div>
-                                      </div>';
-                                      
-                                // Display user message
-                                echo '<div class="message user">
-                                        <div class="message-header">
-                                            <div class="message-role">user</div>
-                                            <div class="message-timestamp">' . ($timestamp ? date('Y-m-d H:i:s', $timestamp) : '') . '</div>
-                                        </div>
-                                        <div class="message-content">' . renderMarkdown($userContent) . '</div>
-                                      </div>';
-                                continue;
-                            }
-                        }
-                        
-                        // Handle system message only
-                        if ($role === 'system' && strpos($content, 'System: ') === 0) {
-                            $systemContent = substr($content, 8);
-                            echo '<div class="message system">
-                                    <div class="message-header">
-                                        <div class="message-role">system</div>
-                                        <div class="message-timestamp">' . ($timestamp ? date('Y-m-d H:i:s', $timestamp) : '') . '</div>
-                                    </div>
-                                    <div class="message-content">' . renderMarkdown($systemContent) . '</div>
-                                  </div>';
-                            continue;
-                        }
-                        
-                        // Regular message
-                        $displayRole = $role === 'mixed' ? 'user' : $role;
+                        // Regular message - no special handling needed
+                        $displayRole = $role;
+                        $isSystemMessage = ($role === 'system');
                     ?>
                         <div class="message <?= htmlspecialchars($displayRole) ?>">
-                            <div class="message-header">
-                                <div class="message-role"><?= htmlspecialchars($displayRole) ?></div>
+                            <div class="message-header" <?= $isSystemMessage ? 'style="cursor: pointer;" onclick="toggleSystemPrompt(this)"' : '' ?>>
+                                <div class="message-role">
+                                    <?= htmlspecialchars($displayRole) ?>
+                                    <?= $isSystemMessage ? ' <span style="font-size: 0.8em; color: #666;">(click to expand)</span>' : '' ?>
+                                </div>
                                 <div class="message-timestamp"><?= $timestamp ? date('Y-m-d H:i:s', $timestamp) : '' ?></div>
                             </div>
-                            <div class="message-content"><?= renderMarkdown($content) ?></div>
+                            <div class="message-content" <?= $isSystemMessage ? 'style="display: none;"' : '' ?>><?= renderMarkdown($content) ?></div>
                         </div>
                     <?php endforeach; ?>
                 </div>
+
+                <script>
+                function toggleSystemPrompt(header) {
+                    const content = header.nextElementSibling;
+                    const roleElement = header.querySelector('.message-role');
+                    
+                    if (content.style.display === 'none') {
+                        content.style.display = 'block';
+                        roleElement.innerHTML = roleElement.innerHTML.replace('(click to expand)', '(click to collapse)');
+                    } else {
+                        content.style.display = 'none';
+                        roleElement.innerHTML = roleElement.innerHTML.replace('(click to collapse)', '(click to expand)');
+                    }
+                }
+                </script>
 
                 <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee;">
                     <div style="margin-bottom: 15px; padding: 10px; background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 4px;">
@@ -665,6 +728,138 @@ function processInlineFormatting($text) {
                     <a href="?action=list" class="back-link">← Back to List</a>
                 </div>
             <?php endif; ?>
+
+        <?php elseif ($action === 'system_prompts'): ?>
+            <h2>System Prompts Management</h2>
+
+            <?php if (isset($_GET['success'])): ?>
+                <div style="background: #d4edda; color: #155724; padding: 10px; border: 1px solid #c3e6cb; border-radius: 4px; margin-bottom: 15px;">
+                    <?php
+                    switch ($_GET['success']) {
+                        case 'created': echo 'System prompt created successfully!'; break;
+                        case 'updated': echo 'System prompt updated successfully!'; break;
+                        case 'deleted': echo 'System prompt deleted successfully!'; break;
+                        case 'default_set': echo 'Default system prompt set successfully!'; break;
+                    }
+                    ?>
+                </div>
+            <?php endif; ?>
+
+            <?php if (isset($promptError)): ?>
+                <div style="background: #f8d7da; color: #721c24; padding: 10px; border: 1px solid #f5c6cb; border-radius: 4px; margin-bottom: 15px;">
+                    <?= htmlspecialchars($promptError) ?>
+                </div>
+            <?php endif; ?>
+
+            <?php
+            $systemPrompts = $storage->getAllSystemPrompts();
+            $editingPrompt = null;
+            if ($systemPromptId) {
+                $editingPrompt = $storage->getSystemPrompt($systemPromptId);
+            }
+            ?>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-bottom: 30px;">
+                <!-- Create/Edit Form -->
+                <div>
+                    <h3><?= $editingPrompt ? 'Edit' : 'Create' ?> System Prompt</h3>
+                    <form method="post" style="background: #f8f9fa; padding: 20px; border-radius: 6px; border: 1px solid #e9ecef;">
+                        <input type="hidden" name="prompt_action" value="<?= $editingPrompt ? 'update' : 'create' ?>">
+                        <?php if ($editingPrompt): ?>
+                            <input type="hidden" name="prompt_id" value="<?= $editingPrompt['id'] ?>">
+                        <?php endif; ?>
+
+                        <div style="margin-bottom: 15px;">
+                            <label style="display: block; margin-bottom: 5px; font-weight: bold;">Name:</label>
+                            <input type="text" name="prompt_name" required
+                                   value="<?= htmlspecialchars($editingPrompt['name'] ?? '') ?>"
+                                   style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                        </div>
+
+                        <div style="margin-bottom: 15px;">
+                            <label style="display: block; margin-bottom: 5px; font-weight: bold;">Description:</label>
+                            <input type="text" name="prompt_description"
+                                   value="<?= htmlspecialchars($editingPrompt['description'] ?? '') ?>"
+                                   style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                        </div>
+
+                        <div style="margin-bottom: 15px;">
+                            <label style="display: block; margin-bottom: 5px; font-weight: bold;">Prompt Content:</label>
+                            <textarea name="prompt_content" required rows="6"
+                                      style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; resize: vertical;"><?= htmlspecialchars($editingPrompt['prompt'] ?? '') ?></textarea>
+                        </div>
+
+                        <div style="margin-bottom: 15px;">
+                            <label>
+                                <input type="checkbox" name="is_default" <?= ($editingPrompt['is_default'] ?? false) ? 'checked' : '' ?>>
+                                Set as default prompt
+                            </label>
+                        </div>
+
+                        <div>
+                            <button type="submit" style="padding: 8px 15px; background: #007cba; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                                <?= $editingPrompt ? 'Update' : 'Create' ?> Prompt
+                            </button>
+                            <?php if ($editingPrompt): ?>
+                                <a href="?action=system_prompts" style="margin-left: 10px; padding: 8px 15px; background: #666; color: white; text-decoration: none; border-radius: 4px;">Cancel</a>
+                            <?php endif; ?>
+                        </div>
+                    </form>
+                </div>
+
+                <!-- Prompts List -->
+                <div>
+                    <h3>Existing System Prompts</h3>
+                    <?php if (empty($systemPrompts)): ?>
+                        <p style="color: #666; font-style: italic;">No system prompts created yet.</p>
+                    <?php else: ?>
+                        <div style="max-height: 600px; overflow-y: auto;">
+                            <?php foreach ($systemPrompts as $prompt): ?>
+                                <div style="background: white; border: 1px solid #ddd; border-radius: 6px; padding: 15px; margin-bottom: 15px; <?= $prompt['is_default'] ? 'border-left: 4px solid #007cba;' : '' ?>">
+                                    <div style="display: flex; justify-content: between; align-items: flex-start; margin-bottom: 10px;">
+                                        <div style="flex: 1;">
+                                            <h4 style="margin: 0 0 5px 0;">
+                                                <?= htmlspecialchars($prompt['name']) ?>
+                                                <?php if ($prompt['is_default']): ?>
+                                                    <span style="background: #007cba; color: white; padding: 2px 6px; border-radius: 3px; font-size: 0.7em; margin-left: 8px;">DEFAULT</span>
+                                                <?php endif; ?>
+                                            </h4>
+                                            <?php if ($prompt['description']): ?>
+                                                <p style="margin: 0 0 10px 0; color: #666; font-size: 0.9em;"><?= htmlspecialchars($prompt['description']) ?></p>
+                                            <?php endif; ?>
+                                        </div>
+                                        <div style="margin-left: 15px;">
+                                            <a href="?action=system_prompts&prompt_id=<?= $prompt['id'] ?>"
+                                               style="padding: 4px 8px; background: #007cba; color: white; text-decoration: none; border-radius: 3px; font-size: 0.8em; margin-right: 5px;">Edit</a>
+                                            <?php if (!$prompt['is_default']): ?>
+                                                <form method="post" style="display: inline;">
+                                                    <input type="hidden" name="prompt_action" value="set_default">
+                                                    <input type="hidden" name="prompt_id" value="<?= $prompt['id'] ?>">
+                                                    <button type="submit" style="padding: 4px 8px; background: #28a745; color: white; border: none; border-radius: 3px; font-size: 0.8em; cursor: pointer; margin-right: 5px;">Set Default</button>
+                                                </form>
+                                            <?php endif; ?>
+                                            <form method="post" style="display: inline;" onsubmit="return confirm('Are you sure you want to delete this system prompt?')">
+                                                <input type="hidden" name="prompt_action" value="delete">
+                                                <input type="hidden" name="prompt_id" value="<?= $prompt['id'] ?>">
+                                                <button type="submit" style="padding: 4px 8px; background: #dc3545; color: white; border: none; border-radius: 3px; font-size: 0.8em; cursor: pointer;">Delete</button>
+                                            </form>
+                                        </div>
+                                    </div>
+                                    <div style="background: #f8f9fa; padding: 10px; border-radius: 4px; font-family: monospace; font-size: 0.9em; white-space: pre-wrap; max-height: 150px; overflow-y: auto;">
+                                        <?= htmlspecialchars($prompt['prompt']) ?>
+                                    </div>
+                                    <div style="margin-top: 8px; font-size: 0.8em; color: #666;">
+                                        Created: <?= date('M j, Y g:i A', $prompt['created_at']) ?>
+                                        <?php if ($prompt['updated_at'] != $prompt['created_at']): ?>
+                                            • Updated: <?= date('M j, Y g:i A', $prompt['updated_at']) ?>
+                                        <?php endif; ?>
+                                    </div>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+                    <?php endif; ?>
+                </div>
+            </div>
 
         <?php elseif ($action === 'stats'): ?>
             <?php
@@ -817,8 +1012,10 @@ function processInlineFormatting($text) {
                         // Calculate size class (1-6) based on count
                         $normalized = ($count - $minCount) / $range;
                         $sizeClass = max(1, min(6, ceil($normalized * 5) + 1));
+                        $isSystemTag = (strpos($tag, 'system') === 0);
+                        $systemClass = $isSystemTag ? ' system-tag' : '';
                     ?>
-                        <a href="?action=list&tag=<?= urlencode($tag) ?>" class="tag-cloud-item tag-cloud-size-<?= $sizeClass ?>" title="<?= $count ?> conversations">
+                        <a href="?action=list&tag=<?= urlencode($tag) ?>" class="tag-cloud-item tag-cloud-size-<?= $sizeClass ?><?= $systemClass ?>" title="<?= $count ?> conversations">
                             <?= htmlspecialchars($tag) ?>
                         </a>
                     <?php endforeach; ?>

@@ -2,7 +2,7 @@
 
 abstract class LogStorage {
     abstract public function initializeConversation($conversationId, $model, $createdAt = null);
-    abstract public function writeSystemPrompt($conversationId, $systemPrompt);
+    abstract public function writeSystemPrompt($conversationId, $systemPrompt, $promptName = null);
     abstract public function writeUserMessage($conversationId, $message, $createdAt = null);
     abstract public function writeAssistantMessage($conversationId, $message, $createdAt = null);
     abstract public function loadConversation($conversationId);
@@ -37,9 +37,10 @@ class FileLogStorage extends LogStorage {
         return $filePath;
     }
 
-    public function writeSystemPrompt($conversationId, $systemPrompt) {
+    public function writeSystemPrompt($conversationId, $systemPrompt, $promptName = null) {
         $fp = $this->getFileHandle($conversationId);
         fwrite($fp, 'System: ' . $systemPrompt . PHP_EOL);
+        // Note: File storage doesn't support tagging
     }
 
     public function writeUserMessage($conversationId, $message, $createdAt = null) {
@@ -209,7 +210,6 @@ class SQLiteLogStorage extends LogStorage {
             CREATE TABLE IF NOT EXISTS conversations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 model TEXT NOT NULL,
-                system_prompt TEXT,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL,
                 tags TEXT DEFAULT ''
@@ -227,9 +227,33 @@ class SQLiteLogStorage extends LogStorage {
             )
         ");
 
+        $this->db->exec("
+            CREATE TABLE IF NOT EXISTS system_prompts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                prompt TEXT NOT NULL,
+                description TEXT,
+                is_default INTEGER DEFAULT 0,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            )
+        ");
+
         $this->db->exec("CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id)");
         $this->db->exec("CREATE INDEX IF NOT EXISTS idx_conversations_created ON conversations(created_at DESC)");
         $this->db->exec("CREATE INDEX IF NOT EXISTS idx_conversations_tags ON conversations(tags)");
+        $this->db->exec("CREATE INDEX IF NOT EXISTS idx_system_prompts_name ON system_prompts(name)");
+
+        // Insert default empty system prompt if none exists
+        $existingPrompts = $this->db->query("SELECT COUNT(*) FROM system_prompts")->fetchColumn();
+        if ($existingPrompts == 0) {
+            $time = time();
+            $stmt = $this->db->prepare("
+                INSERT INTO system_prompts (name, prompt, description, is_default, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ");
+            $stmt->execute(['default', '', 'Default empty system prompt', 1, $time, $time]);
+        }
     }
 
     public function initializeConversation($conversationId, $model, $createdAt = null) {
@@ -245,17 +269,29 @@ class SQLiteLogStorage extends LogStorage {
         return $this->db->lastInsertId();
     }
 
-    public function writeSystemPrompt($conversationId, $systemPrompt) {
-        // Update the conversation with system prompt
-        $stmt = $this->db->prepare("
-            UPDATE conversations 
-            SET system_prompt = ?, updated_at = ? 
-            WHERE id = ?
-        ");
-        $stmt->execute([$systemPrompt, time(), $conversationId]);
-
-        // Also add as a message for completeness
+    public function writeSystemPrompt($conversationId, $systemPrompt, $promptName = null) {
+        // Simply add as the first system message
         $this->writeMessage($conversationId, 'system', $systemPrompt);
+
+        // Add automatic system prompt tag
+        $this->addSystemPromptTag($conversationId, $systemPrompt, $promptName);
+    }
+
+    private function addSystemPromptTag($conversationId, $systemPrompt, $promptName = null) {
+        $tag = null;
+
+        if ($promptName) {
+            // Predefined system prompt - tag as "system:name"
+            $tag = 'system:' . $promptName;
+        } elseif (!empty(trim($systemPrompt))) {
+            // User-entered custom system prompt - tag as "system"
+            $tag = 'system';
+        }
+        // No tag for default/empty system prompt
+
+        if ($tag) {
+            $this->addTagToConversation($conversationId, $tag);
+        }
     }
 
     public function writeUserMessage($conversationId, $message, $createdAt = null) {
@@ -291,66 +327,13 @@ class SQLiteLogStorage extends LogStorage {
         ");
         $stmt->execute([$conversationId]);
         
-        $messages = [];
-        $systemMessage = '';
-        $systemTimestamp = null;
-        $userMessages = [];
-        $assistantMessages = [];
-        
-        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-            if ($row['role'] === 'system') {
-                $systemMessage = 'System: ' . $row['content'];
-                $systemTimestamp = $row['created_at'];
-            } elseif ($row['role'] === 'user') {
-                $userMessages[] = ['content' => $row['content'], 'timestamp' => $row['created_at']];
-            } elseif ($row['role'] === 'assistant') {
-                $assistantMessages[] = ['content' => $row['content'], 'timestamp' => $row['created_at']];
-            }
-        }
-
-        // Reconstruct alternating pattern like FileLogStorage but with timestamps
         $result = [];
-        
-        // Add system message combined with first user message if exists
-        if ($systemMessage && !empty($userMessages)) {
-            $firstUser = array_shift($userMessages);
+        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
             $result[] = [
-                'content' => $systemMessage . "\n" . $firstUser['content'],
-                'timestamp' => $firstUser['timestamp'],
-                'role' => 'mixed'
+                'content' => $row['content'],
+                'timestamp' => $row['created_at'],
+                'role' => $row['role']
             ];
-        } elseif ($systemMessage) {
-            $result[] = [
-                'content' => $systemMessage,
-                'timestamp' => $systemTimestamp,
-                'role' => 'system'
-            ];
-        } elseif (!empty($userMessages)) {
-            $firstUser = array_shift($userMessages);
-            $result[] = [
-                'content' => $firstUser['content'],
-                'timestamp' => $firstUser['timestamp'],
-                'role' => 'user'
-            ];
-        }
-        
-        // Alternate between remaining user and assistant messages
-        $maxMessages = max(count($userMessages), count($assistantMessages));
-        for ($i = 0; $i < $maxMessages; $i++) {
-            if (isset($assistantMessages[$i])) {
-                $result[] = [
-                    'content' => $assistantMessages[$i]['content'],
-                    'timestamp' => $assistantMessages[$i]['timestamp'],
-                    'role' => 'assistant'
-                ];
-            }
-            if (isset($userMessages[$i])) {
-                $result[] = [
-                    'content' => $userMessages[$i]['content'],
-                    'timestamp' => $userMessages[$i]['timestamp'],
-                    'role' => 'user'
-                ];
-            }
         }
 
         return empty($result) ? null : $result;
@@ -437,14 +420,12 @@ class SQLiteLogStorage extends LogStorage {
         $stmt->execute([$conversationId]);
         $messages = $stmt->fetchAll(PDO::FETCH_ASSOC);
         
-        $tags = $this->detectTags($messages);
-        $tagsString = implode(',', $tags);
+        $detectedTags = $this->detectTags($messages);
         
-        // Update conversation with tags
-        $updateStmt = $this->db->prepare("
-            UPDATE conversations SET tags = ? WHERE id = ?
-        ");
-        $updateStmt->execute([$tagsString, $conversationId]);
+        // Add each detected tag individually (this preserves existing tags)
+        foreach ($detectedTags as $tag) {
+            $this->addTagToConversation($conversationId, $tag);
+        }
     }
     
     public function detectTags($messages) {
@@ -579,9 +560,8 @@ class SQLiteLogStorage extends LogStorage {
         
         if ($search) {
             $sql .= " LEFT JOIN messages m ON c.id = m.conversation_id";
-            $whereClauses[] = "(m.content LIKE ? OR c.system_prompt LIKE ?)";
+            $whereClauses[] = "m.content LIKE ?";
             $searchParam = '%' . $search . '%';
-            $params[] = $searchParam;
             $params[] = $searchParam;
         }
         
@@ -690,6 +670,104 @@ class SQLiteLogStorage extends LogStorage {
 
             $this->db->commit();
             return true;
+        } catch (Exception $e) {
+            $this->db->rollback();
+            return false;
+        }
+    }
+
+    public function getAllSystemPrompts() {
+        $stmt = $this->db->prepare("
+            SELECT * FROM system_prompts
+            ORDER BY is_default DESC, name ASC
+        ");
+        $stmt->execute();
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    public function getSystemPrompt($id) {
+        $stmt = $this->db->prepare("SELECT * FROM system_prompts WHERE id = ?");
+        $stmt->execute([$id]);
+        return $stmt->fetch(PDO::FETCH_ASSOC);
+    }
+
+    public function getSystemPromptByName($name) {
+        $stmt = $this->db->prepare("SELECT * FROM system_prompts WHERE name = ?");
+        $stmt->execute([$name]);
+        return $stmt->fetch(PDO::FETCH_ASSOC);
+    }
+
+    public function getDefaultSystemPrompt() {
+        $stmt = $this->db->prepare("SELECT * FROM system_prompts WHERE is_default = 1 LIMIT 1");
+        $stmt->execute();
+        return $stmt->fetch(PDO::FETCH_ASSOC);
+    }
+
+    public function createSystemPrompt($name, $prompt, $description = '', $isDefault = false) {
+        $time = time();
+
+        // If setting as default, unset other defaults first
+        if ($isDefault) {
+            $this->db->exec("UPDATE system_prompts SET is_default = 0");
+        }
+
+        $stmt = $this->db->prepare("
+            INSERT INTO system_prompts (name, prompt, description, is_default, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ");
+
+        try {
+            $stmt->execute([$name, $prompt, $description, $isDefault ? 1 : 0, $time, $time]);
+            return $this->db->lastInsertId();
+        } catch (PDOException $e) {
+            if ($e->getCode() == 23000) { // UNIQUE constraint failed
+                return false;
+            }
+            throw $e;
+        }
+    }
+
+    public function updateSystemPrompt($id, $name, $prompt, $description = '', $isDefault = false) {
+        $time = time();
+
+        // If setting as default, unset other defaults first
+        if ($isDefault) {
+            $this->db->exec("UPDATE system_prompts SET is_default = 0");
+        }
+
+        $stmt = $this->db->prepare("
+            UPDATE system_prompts
+            SET name = ?, prompt = ?, description = ?, is_default = ?, updated_at = ?
+            WHERE id = ?
+        ");
+
+        try {
+            return $stmt->execute([$name, $prompt, $description, $isDefault ? 1 : 0, $time, $id]);
+        } catch (PDOException $e) {
+            if ($e->getCode() == 23000) { // UNIQUE constraint failed
+                return false;
+            }
+            throw $e;
+        }
+    }
+
+    public function deleteSystemPrompt($id) {
+        $stmt = $this->db->prepare("DELETE FROM system_prompts WHERE id = ?");
+        return $stmt->execute([$id]);
+    }
+
+    public function setDefaultSystemPrompt($id) {
+        $this->db->beginTransaction();
+        try {
+            // Unset all defaults
+            $this->db->exec("UPDATE system_prompts SET is_default = 0");
+
+            // Set new default
+            $stmt = $this->db->prepare("UPDATE system_prompts SET is_default = 1 WHERE id = ?");
+            $result = $stmt->execute([$id]);
+
+            $this->db->commit();
+            return $result;
         } catch (Exception $e) {
             $this->db->rollback();
             return false;

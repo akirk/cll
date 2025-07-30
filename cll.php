@@ -283,7 +283,6 @@ try {
 	}
 }
 
-
 $system = false;
 
 $supported_models = array();
@@ -446,19 +445,19 @@ if ( isset( $options['h'] ) || isset( $options['help'] ) ) {
 	$offline = ! $online ? "(we're offline)" : '';
 	$self = basename( $_SERVER['argv'][0] );
 	echo <<<USAGE
-Usage: $self [-l] [-f] [-r [number|searchterm]] [-m model] [-s system_prompt] [-i input_file_s] [-p picture_file] [-w port|--webui] [conversation_input]
+Usage: $self [-l] [-f] [-r [number|searchterm]] [-m model] [-s [system_prompt|id]] [-i input_file_s] [-p picture_file] [-w port|--webui] [conversation_input]
 
 Options:
-  -l                 Resume last conversation.
-  -r number|search   Resume a previous conversation and list 'number' conversations or search them.
-  -d                 Ignore the model's last answer. Useful when combining with -l to ask the question to another model.
-  -v                 Be verbose.
-  -f                 Allow file system writes for suggested file content by the AI.
-  -m [model]         Use a specific model. Default: $model
-  -i input_file(s)   Read these files and add them to the prompt.
-  -p picture_file    Add an picture as input (only gpt-4o).
-  -s system_prompt   Specify a system prompt preceeding the conversation.
-  -w port|--webui    Launch web UI on specified port (default: 8080) and open browser.
+  -l                   Resume last conversation.
+  -r number|search     Resume a previous conversation and list 'number' conversations or search them.
+  -d                   Ignore the model's last answer. Useful when combining with -l to ask the question to another model.
+  -v                   Be verbose.
+  -f                   Allow file system writes for suggested file content by the AI.
+  -m [model]           Use a specific model. Default: $model
+  -i input_file(s)     Read these files and add them to the prompt.
+  -p picture_file      Add an picture as input (only gpt-4o).
+  -s [prompt|id|name]  System prompt: text, saved prompt ID/name, or empty to list saved prompts.
+  -w port|--webui      Launch web UI on specified port (default: 8080) and open browser.
 
 Arguments:
   conversation_input  Input for the first conversation.
@@ -466,6 +465,7 @@ Arguments:
 Notes:
   - To input multiline messages, send an empty message.
   - To end the conversation, enter "bye".
+  - System prompts are managed via the web interface at --webui.
 
 Example usage:
   $self -l
@@ -481,7 +481,16 @@ Example usage:
     Resume a conversation and list the last 10 containing "hello" to choose from.
 
   $self -s "Only respond in emojis"
-    Have an interesting conversation 🙂
+    Use custom system prompt.
+
+  $self -s
+    List all saved system prompts.
+
+  $self -s 3
+    Use saved system prompt with ID 3.
+
+  $self -s learn
+    Use saved system prompt named 'learn'.
 
   $self Tell me a joke
     Starts a new conversation with the given message.
@@ -501,7 +510,8 @@ USAGE;
 	exit( 1 );
 }
 $messages = array();
-$initial_input = trim( implode( ' ', array_slice( $_SERVER['argv'], $initial_input ) ) . ' ' );
+$remaining_args = array_slice( $_SERVER['argv'], $initial_input );
+$initial_input = trim( implode( ' ', $remaining_args ) . ' ' );
 $stdin = false;
 
 $fp_stdin = fopen( 'php://stdin', 'r' );
@@ -549,7 +559,7 @@ $wrapper = array(
 );
 
 if ( $ansi || isset( $options['v'] ) ) {
-	fprintf( STDERR, 'Model: ' . $model . ' via ' . $model_provider . ( isset( $options['v'] ) ? ' (verbose)' : '' ) . PHP_EOL );
+	fprintf( STDERR, 'Model: ' . $model . ' via ' . $model_provider . ( isset( $options['v'] ) ? ' (verbose)' : '' ) . ', ' );
 	fprintf( STDERR, 'Storage: ' . $storage_type . PHP_EOL );
 }
 
@@ -557,12 +567,12 @@ if ( $ansi || isset( $options['v'] ) ) {
 $conversation_id = ($storage_type === 'SQLite') ? null : $time;
 
 if ( isset( $options['l'] ) ) {
-	$options['r'] = 1;
+	$lastConversations = $logStorage->findConversations(1);
+	$options['r'] = $lastConversations[0];
 }
 
 $sel = false;
 $last_conversations = array();
-
 if ( isset( $options['r'] ) ) {
 	$search = false;
 	$specific_conversation_id = false;
@@ -825,6 +835,7 @@ if ( isset( $options['r'] ) ) {
 		if ( substr( $first_content, 0, 7 ) === 'System:' ) {
 			$system = substr( $first_content, 8, strpos( $first_content, PHP_EOL ) - 8 );
 			$remaining_content = substr( $first_content, strlen( $system ) + 9 );
+			$system_prompt_name = null; // Resume case - no name available
 
 			// Update the first message with the remaining content
 			if (is_array($conversations[ $conversation_key ][ 0 ])) {
@@ -836,6 +847,7 @@ if ( isset( $options['r'] ) ) {
 			if ( isset( $options['s'] ) && $options['s'] ) {
 				echo 'Old System prompt: ' . $system, PHP_EOL, 'New ';
 				$system = $options['s'];
+				$system_prompt_name = null; // Override case - custom prompt
 			}
 			echo 'System prompt: ', $system, PHP_EOL;
 			if ( $model_provider === 'Anthropic' ) {
@@ -875,14 +887,42 @@ if ( isset( $options['r'] ) ) {
 	}
 } elseif ( ! empty( $options['s'] ) || isset( $options['f'] ) ) {
 	$system = '';
-	if ( isset( $options['f'] ) ) {
-		$system = 'When recommending file content it must be prepended with the proposed filename in the form: "File: filename.ext"';
-	}
+	$system_prompt_name = null; // Track the name for tagging
 	if ( ! empty( $options['s'] ) ) {
-		if ( $system ) {
-			$system .= ' ';
+		if ($storage_type === 'SQLite') {
+			if (is_numeric($options['s'])) {
+				$found_system_prompt = $logStorage->getSystemPrompt(intval($options['s']));
+			} else {
+				$found_system_prompt = $logStorage->getSystemPromptByName($options['s']);
+			}
+			if ( $found_system_prompt ) {
+				$system = $found_system_prompt['prompt'];
+				$system_prompt_name = $found_system_prompt['name']; // Store the name for tagging
+				$words = preg_split( '/\s+/', $system, 11 );
+				if ( isset( $words[10] ) ) {
+					$words[10] = '...';
+				}
+
+				if ( $ansi || isset( $options['v'] ) ) {
+					echo 'Loaded system prompt ', $found_system_prompt['id'] , ': ', implode( ' ', $words ), PHP_EOL;
+				}
+			} else {
+				$system = $options['s'];
+				$system_prompt_name = null; // Custom prompt, no name
+				if ( $ansi || isset( $options['v'] ) ) {
+					echo 'System prompt: ', $system, PHP_EOL;
+				}
+			}
+		} else {
+			$system = $options['s'];
+			$system_prompt_name = null; // Custom prompt, no name
+			if ( $ansi || isset( $options['v'] ) ) {
+				echo 'System prompt: ', $system, PHP_EOL;
+			}
 		}
-		$system .= $options['s'];
+	}
+	if ( isset( $options['f'] ) ) {
+		$system = 'When recommending file content it must be prepended with the proposed filename in the form: "File: filename.ext" ' . $system;
 	}
 	if ( $system ) {
 		if ( $model_provider === 'Anthropic' ) {
@@ -892,10 +932,6 @@ if ( isset( $options['r'] ) ) {
 				'role'    => 'system',
 				'content' => $system,
 			) );
-		}
-
-		if ( $ansi || isset( $options['v'] ) ) {
-			echo 'System prompt: ', $system, PHP_EOL;
 		}
 	}
 	if ( trim( $initial_input ) ) {
@@ -1040,14 +1076,13 @@ while ( true ) {
 				$source_conversation_id = preg_replace('/^history\.(\d+)\..*$/', '$1', $source_conversation_id);
 				$conversation_id = $source_conversation_id; // Use existing conversation ID
 			}
-
-			if ( $system ) {
-				$logStorage->writeSystemPrompt($conversation_id, $system);
-				$system = false;
-			}
 		} else {
 			// Only initialize new conversation if not resuming
 			$conversation_id = $logStorage->initializeConversation($conversation_id, $model);
+		}
+		if ( $system ) {
+			$logStorage->writeSystemPrompt($conversation_id, $system, $system_prompt_name);
+			$system = false;
 		}
 		$conversation_initialized = true;
 	}
@@ -1175,7 +1210,7 @@ while ( true ) {
 		// Persist history unless prepended by whitespace.
 		readline_write_history( $readline_history_file );
 		if ( $system ) {
-			$logStorage->writeSystemPrompt($conversation_id, $system);
+			$logStorage->writeSystemPrompt($conversation_id, $system, $system_prompt_name);
 			$system = false;
 		}
 		$logStorage->writeUserMessage($conversation_id, $input);
