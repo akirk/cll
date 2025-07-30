@@ -210,7 +210,7 @@ if (php_sapi_name() === 'cli') {
     $options = getopt('hdls:e:n:', ['help', 'dry-run', 'list', 'sqlite:', 'export:', 'limit:']);
     
     if (isset($options['h']) || isset($options['help'])) {
-        echo "Usage: php import_conversations.php [options]\n";
+        echo "Usage: php import-conversations.php [options]\n";
         echo "\nOptions:\n";
         echo "  -h, --help          Show this help message\n";
         echo "  -d, --dry-run       Perform a dry run without importing\n";
@@ -219,10 +219,10 @@ if (php_sapi_name() === 'cli') {
         echo "  -e, --export ID     Export specific conversation to stdout\n";
         echo "  -n, --limit N       Limit number of conversations to import\n";
         echo "\nExamples:\n";
-        echo "  php import_conversations.php --dry-run\n";
-        echo "  php import_conversations.php --limit 10\n";
-        echo "  php import_conversations.php --list\n";
-        echo "  php import_conversations.php --export 1234567890\n";
+        echo "  php import-conversations.php --dry-run\n";
+        echo "  php import-conversations.php --limit 10\n";
+        echo "  php import-conversations.php --list\n";
+        echo "  php import-conversations.php --export 1234567890\n";
         exit(0);
     }
 
