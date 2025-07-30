@@ -16,13 +16,8 @@ $conversationIds = $stmt->fetchAll(PDO::FETCH_COLUMN);
 echo "Found " . count($conversationIds) . " conversations to process.\n";
 
 foreach ($conversationIds as $id) {
-    // Use reflection to access the private method
-    $reflection = new ReflectionClass($storage);
-    $updateMethod = $reflection->getMethod('updateConversationTags');
-    $updateMethod->setAccessible(true);
-    
     try {
-        $updateMethod->invoke($storage, $id);
+        $storage->updateConversationTags($id);
         echo "Tagged conversation $id\n";
     } catch (Exception $e) {
         echo "Error tagging conversation $id: " . $e->getMessage() . "\n";
@@ -30,4 +25,3 @@ foreach ($conversationIds as $id) {
 }
 
 echo "Done! All existing conversations have been tagged.\n";
-?>

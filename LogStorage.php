@@ -427,7 +427,7 @@ class SQLiteLogStorage extends LogStorage {
         // The connection will be closed when the object is destroyed
     }
 
-    private function updateConversationTags($conversationId) {
+    public function updateConversationTags($conversationId) {
         // Get all messages in conversation
         $stmt = $this->db->prepare("
             SELECT content, role FROM messages 
@@ -447,7 +447,7 @@ class SQLiteLogStorage extends LogStorage {
         $updateStmt->execute([$tagsString, $conversationId]);
     }
     
-    private function detectTags($messages) {
+    public function detectTags($messages) {
         $tags = [];
         $allContent = '';
         $hasCode = false;

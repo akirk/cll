@@ -29,11 +29,7 @@ foreach ($conversationIds as $id) {
         continue;
     }
     
-    // Use reflection to call the private detectTags method
-    $reflection = new ReflectionClass($storage);
-    $method = $reflection->getMethod('detectTags');
-    $method->setAccessible(true);
-    $tags = $method->invoke($storage, $messages);
+    $tags = $storage->detectTags($messages);
     
     // Update the conversation with new tags
     $tagsString = implode(',', $tags);
@@ -45,4 +41,3 @@ foreach ($conversationIds as $id) {
 }
 
 echo "\nCompleted! Re-tagged $count conversations.\n";
-?>
