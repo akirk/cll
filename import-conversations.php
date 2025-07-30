@@ -1,6 +1,187 @@
 <?php
 require_once __DIR__ . '/LogStorage.php';
 
+class FileLogStorage extends LogStorage {
+    private $baseDirectory;
+    private $openFiles = [];
+
+    public function __construct($baseDirectory) {
+        $this->baseDirectory = rtrim($baseDirectory, '/');
+        if (!file_exists($this->baseDirectory)) {
+            if (!mkdir($this->baseDirectory, 0777, true)) {
+                throw new Exception("Could not create log directory: " . $this->baseDirectory);
+            }
+        }
+    }
+
+    public function initializeConversation($conversationId, $model, $createdAt = null) {
+        $historyDirectory = $this->getHistoryDirectory($conversationId);
+        if (!file_exists($historyDirectory)) {
+            mkdir($historyDirectory, 0777, true);
+        }
+        
+        $filePath = $this->getConversationFilePath($conversationId, $model);
+        if (!isset($this->openFiles[$conversationId])) {
+            $this->openFiles[$conversationId] = fopen($filePath, 'a');
+        }
+        return $filePath;
+    }
+
+    public function writeSystemPrompt($conversationId, $systemPrompt, $promptName = null) {
+        $fp = $this->getFileHandle($conversationId);
+        fwrite($fp, 'System: ' . $systemPrompt . PHP_EOL);
+        // Note: File storage doesn't support tagging
+    }
+
+    public function writeUserMessage($conversationId, $message, $createdAt = null) {
+        $fp = $this->getFileHandle($conversationId);
+        if (false === strpos($message, PHP_EOL)) {
+            fwrite($fp, '> ' . $message . PHP_EOL . PHP_EOL);
+        } else {
+            fwrite($fp, '>>> ' . $message . PHP_EOL . '.' . PHP_EOL . PHP_EOL);
+        }
+    }
+
+    public function writeAssistantMessage($conversationId, $message, $createdAt = null) {
+        $fp = $this->getFileHandle($conversationId);
+        fwrite($fp, $message . PHP_EOL . PHP_EOL);
+    }
+
+    public function loadConversation($filePath) {
+        if (!file_exists($filePath)) {
+            return null;
+        }
+
+        $conversationContents = file_get_contents($filePath);
+        $split = preg_split('/^>(?: ([^\n]*)|>> (.*)\n\.)\n\n/ms', trim($conversationContents), -1, PREG_SPLIT_DELIM_CAPTURE);
+        $split = array_filter($split);
+        $split = array_values($split);
+
+        if (count($split) < 2) {
+            return null;
+        }
+
+        $s = array_shift($split);
+        if (substr($s, 0, 7) === 'System:') {
+            $split[0] = $s . $split[0];
+        } else {
+            array_unshift($split, $s);
+        }
+
+        return $split;
+    }
+
+    public function findConversations($limit = 10, $search = null, $tag = null, $offset = 0) {
+        $historyFiles = [];
+        $time = time();
+        
+        for ($i = 0; $i > -300; $i -= 20) {
+            $pattern = $this->baseDirectory . '/*/*/history.*';
+            $moreHistoryFiles = array_flip(glob($pattern));
+            
+            if ($search) {
+                $moreHistoryFiles = array_filter($moreHistoryFiles, function($file) use ($search) {
+                    $fileContents = file_get_contents($file);
+                    return false !== stripos($fileContents, $search);
+                }, ARRAY_FILTER_USE_KEY);
+            }
+            
+            $historyFiles = array_merge($historyFiles, $moreHistoryFiles);
+            if (count($historyFiles) >= $limit) {
+                break;
+            }
+        }
+        
+        krsort($historyFiles);
+        return array_slice(array_keys($historyFiles), $offset, $limit);
+    }
+
+    public function getConversationMetadata($filePath) {
+        if (!file_exists($filePath)) {
+            return null;
+        }
+
+        $filenameParts = explode('.', basename($filePath));
+        $usedModel = isset($filenameParts[2]) && $filenameParts[2] !== 'txt' ? $filenameParts[2] : '';
+        $timestamp = isset($filenameParts[1]) && is_numeric($filenameParts[1]) ? $filenameParts[1] : time();
+        
+        $conversationContents = file_get_contents($filePath);
+        $wordCount = str_word_count($conversationContents);
+        
+        $split = preg_split('/^>(?: ([^\n]*)|>> (.*)\n\.)\n\n/ms', trim($conversationContents), -1, PREG_SPLIT_DELIM_CAPTURE);
+        if ( ! is_array($split) || count($split) < 2) {
+            return null;
+        }
+
+        $answers = intval(count(array_filter($split)) / 2);
+
+        return [
+            'model' => $usedModel,
+            'timestamp' => $timestamp,
+            'word_count' => $wordCount,
+            'answers' => $answers,
+            'file_path' => $filePath
+        ];
+    }
+
+    public function copyConversation($sourceId, $targetId) {
+        $sourceFile = $this->findConversationFile($sourceId);
+        if (!$sourceFile) {
+            return false;
+        }
+        
+        $targetFile = $this->getConversationFilePath($targetId, '');
+        return copy($sourceFile, $targetFile);
+    }
+
+    private function getFileHandle($conversationId) {
+        if (!isset($this->openFiles[$conversationId])) {
+            throw new Exception("Conversation not initialized: " . $conversationId);
+        }
+        return $this->openFiles[$conversationId];
+    }
+
+    private function getHistoryDirectory($conversationId) {
+        $timestamp = $this->extractTimestamp($conversationId);
+        return $this->baseDirectory . '/' . date('Y/m', $timestamp);
+    }
+
+    private function getConversationFilePath($conversationId, $model) {
+        $historyDirectory = $this->getHistoryDirectory($conversationId);
+        $modelSuffix = $model ? '.' . preg_replace('/[^a-z0-9]+/', '-', $model) : '';
+        return $historyDirectory . '/history.' . $conversationId . $modelSuffix . '.txt';
+    }
+
+    private function findConversationFile($conversationId) {
+        $historyDirectory = $this->getHistoryDirectory($conversationId);
+        $pattern = $historyDirectory . '/history.' . $conversationId . '*.txt';
+        $files = glob($pattern);
+        return $files ? $files[0] : null;
+    }
+
+    private function extractTimestamp($conversationId) {
+        return is_numeric($conversationId) ? $conversationId : time();
+    }
+
+    public function close($conversationId = null) {
+        if ($conversationId) {
+            if (isset($this->openFiles[$conversationId])) {
+                fclose($this->openFiles[$conversationId]);
+                unset($this->openFiles[$conversationId]);
+            }
+        } else {
+            foreach ($this->openFiles as $fp) {
+                fclose($fp);
+            }
+            $this->openFiles = [];
+        }
+    }
+
+    public function __destruct() {
+        $this->close();
+    }
+}
+
 class ConversationImporter {
     private $fileStorage;
     private $sqliteStorage;
