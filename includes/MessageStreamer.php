@@ -160,6 +160,11 @@ class MessageStreamer
         return PHP_EOL . 'Received ' . count($this->chunks) . " chunks: \033[37m" . json_encode($this->chunks) . PHP_EOL . "\033[m";
     }
 
+    public function getChunks(): array
+    {
+        return $this->chunks;
+    }
+
     public function clearChunks(): void
     {
         $this->chunks = [];
