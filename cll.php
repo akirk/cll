@@ -619,8 +619,29 @@ if ( isset( $options['r'] ) ) {
 			if ( 0 === $k % 2 ) {
 				echo '> ';
 			}
-			output_message( $content . PHP_EOL );
+			
+			// In verbose mode, simulate token streaming for resumed messages
+			if ( isset( $options['v'] ) ) {
+				// Split content into word-like tokens to simulate streaming for debug
+				$words = preg_split('/(\s+)/', $content . PHP_EOL, -1, PREG_SPLIT_DELIM_CAPTURE);
+				foreach ($words as $word) {
+					if ($word !== '') {
+						foreach ( $messageStreamer->outputMessage( $word ) as $output ) {
+							echo $output;
+						}
+					}
+				}
+			} else {
+				output_message( $content . PHP_EOL );
+			}
 		}
+		
+		// Show debug info for resumed conversation in verbose mode
+		if ( isset( $options['v'] ) ) {
+			echo $messageStreamer->getDebugInfo();
+			$messageStreamer->clearChunks();
+		}
+		
 		if ( isset( $options['d'] ) ) {
 			$initial_input = ' ';
 			// Answer the question right away.

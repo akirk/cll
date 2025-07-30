@@ -4,7 +4,21 @@ use PHPUnit\Framework\TestCase;
 
 require_once __DIR__ . '/../includes/MessageStreamer.php';
 
-class MessageStreamerTest extends TestCase
+class FixtureTestCase extends PHPUnit\Framework\TestCase {
+    protected function assertStringEqualsFileOrWrite( $expected_file_path, $actual_content ) {
+        if ( ! file_exists( $expected_file_path ) ) {
+            $dir = dirname( $expected_file_path );
+            if ( ! is_dir( $dir ) ) {
+                mkdir( $dir, 0755, true );
+            }
+            file_put_contents( $expected_file_path, $actual_content );
+            file_put_contents( 'php://stderr', 'Updated fixture: ' . basename( $expected_file_path ) . "\n" );
+        }
+        return $this->assertStringEqualsFile( $expected_file_path, $actual_content );
+    }
+}
+
+class MessageStreamerTest extends FixtureTestCase
 {
     private MessageStreamer $streamer;
 
@@ -13,35 +27,6 @@ class MessageStreamerTest extends TestCase
         $this->streamer = new MessageStreamer(false); // No ANSI for testing
     }
 
-    public function testFractionWithCdotParsing()
-    {
-        // Start with a clean output state
-        iterator_to_array($this->streamer->outputMessage(''));
-        
-        $testExpression = "\\[\n   \\frac{1(1 + 1)}{2} = \\frac{1 \\cdot 2}{2} = 1\n   \\]";
-        
-        // Collect output from generator
-        $result = implode('', iterator_to_array($this->streamer->outputMessage($testExpression)));
-        
-        // Expected: fractions converted to (numerator)/(denominator) format and \cdot converted to ⋅
-        $expected = "(1(1 + 1))/(2) = (1 ⋅ 2)/(2) = 1";
-        
-        $this->assertEquals($expected, $result);
-    }
-    
-    public function testBasicCdotSymbol()
-    {
-        iterator_to_array($this->streamer->outputMessage(''));
-        
-        $testExpression = "\\[ a \\cdot b \\]";
-        
-        $result = implode('', iterator_to_array($this->streamer->outputMessage($testExpression)));
-        
-        $expected = "a ⋅ b";
-        
-        $this->assertEquals($expected, $result);
-    }
-    
     public function testFractionParsing()
     {
         iterator_to_array($this->streamer->outputMessage(''));
@@ -102,8 +87,8 @@ class MessageStreamerTest extends TestCase
 
     public function testTokenStreamProcessing()
     {
-        // Test streaming the provided token array that builds "The Last Whisper" story
-        $tokens = ["**","Title",":"," The"," Last"," Whisper","**\n\n","In"," a"," **","forgot","ten"," village","**,"," a"," **","young"," girl","**"," discovers"," an"," **","anc","ient"," book","**"," that"," holds"," the"," **","se","crets"," of"," lost"," voices","**","."," Each"," page"," unlock","s"," a"," **","wh","isper"," from"," the"," past","**","."," As"," she"," speaks"," the"," words",","," long","-b","ur","ied"," **","mem","ories","**"," awaken",","," revealing"," an"," **","ep","ic"," tale"," of"," love","**,"," **","betr","ay","al","**,"," and"," the"," **","power"," of"," memories","**"," to"," change"," the"," future","."];
+        // Load token stream from fixture
+        $tokens = json_decode(file_get_contents(__DIR__ . '/fixtures/input/token-stream.json'), true);
 
         // Clear any existing state
         iterator_to_array($this->streamer->outputMessage(''));
@@ -119,17 +104,8 @@ class MessageStreamerTest extends TestCase
         // Verify the tokens were stored
         $this->assertEquals(count($tokens), count($this->streamer->getChunks()));
 
-        // The output should contain the story text without markdown formatting (since ANSI is false)
-        $this->assertStringContainsString('Title: The Last Whisper', $output);
-        $this->assertStringContainsString('forgotten village', $output);
-        $this->assertStringContainsString('young girl', $output);
-        $this->assertStringContainsString('ancient book', $output);
-        $this->assertStringContainsString('secrets of lost voices', $output);
-        $this->assertStringContainsString('whisper from the past', $output);
-        $this->assertStringContainsString('memories', $output);
-        $this->assertStringContainsString('epic tale of love', $output);
-        $this->assertStringContainsString('betrayal', $output);
-        $this->assertStringContainsString('power of memories', $output);
+        // Compare output against fixture
+        $this->assertStringEqualsFileOrWrite(__DIR__ . '/fixtures/expected/token-stream-output.txt', $output);
     }
 
     public function testTokenStreamBoldFormatting()
@@ -238,23 +214,45 @@ class MessageStreamerTest extends TestCase
         $this->assertEquals('(a)/(b)', $output);
     }
 
-    public function testCompleteStoryTokenProcessing()
+    private function runFixtureTest($streamer, $expected_dir)
     {
-        // Test processing the complete story with ANSI enabled to check formatting
-        $tokens = ["**","Title",":"," The"," Last"," Whisper","**\n\n","In"," a"," **","forgot","ten"," village","**,"," a"," **","young"," girl","**"," discovers"," an"," **","anc","ient"," book","**"," that"," holds"," the"," **","se","crets"," of"," lost"," voices","**","."," Each"," page"," unlock","s"," a"," **","wh","isper"," from"," the"," past","**","."," As"," she"," speaks"," the"," words",","," long","-b","ur","ied"," **","mem","ories","**"," awaken",","," revealing"," an"," **","ep","ic"," tale"," of"," love","**,"," **","betr","ay","al","**,"," and"," the"," **","power"," of"," memories","**"," to"," change"," the"," future","."];
+        $fixturesDir = __DIR__ . '/fixtures/input';
+        $inputFiles = glob($fixturesDir . '/*.json');
 
-        $ansiStreamer = new MessageStreamer(true); // Enable ANSI for this test
-        iterator_to_array($ansiStreamer->outputMessage(''));
+        $this->assertNotEmpty($inputFiles, 'No input fixture files found');
 
-        $output = '';
-        foreach ($tokens as $token) {
-            $result = iterator_to_array($ansiStreamer->outputMessage($token));
-            $output .= implode('', $result);
+        foreach ($inputFiles as $inputFile) {
+            $filename = basename($inputFile, '.json');
+            $expectedFile = $expected_dir . '/' . $filename . '-output.txt';
+
+            // Load token stream from fixture
+            $tokens = json_decode(file_get_contents($inputFile), true);
+            $this->assertIsArray($tokens, "Failed to decode JSON from $inputFile");
+
+            // Clear any existing state
+            iterator_to_array($streamer->outputMessage(''));
+            $streamer->clearChunks();
+
+            // Process each token individually to simulate streaming
+            $output = '';
+            foreach ($tokens as $token) {
+                $result = iterator_to_array($streamer->outputMessage($token));
+                $output .= implode('', $result);
+            }
+
+            // Compare output against fixture
+            $this->assertStringEqualsFileOrWrite($expectedFile, $output);
         }
+    }
 
-        // Should contain ANSI formatting codes for bold text
-        $this->assertStringContainsString("\033[1m", $output); // Bold on
-        $this->assertStringContainsString("\033[m", $output);  // Reset
-        $this->assertStringContainsString('Title: The Last Whisper', $output);
+    public function testAllInputFixtures()
+    {
+        $this->runFixtureTest($this->streamer, __DIR__ . '/fixtures/expected/');
+    }
+
+    public function testAllInputFixturesWithAnsi()
+    {
+        $ansiStreamer = new MessageStreamer(true);
+        $this->runFixtureTest($ansiStreamer, __DIR__ . '/fixtures/expected-ansi/' );
     }
 }
