@@ -828,33 +828,33 @@ $text = preg_replace_callback(
 				<!-- Create/Edit Form -->
 				<div>
 					<h3><?php echo $editingPrompt ? 'Edit' : 'Create'; ?> System Prompt</h3>
-					<form method="post" style="background: #f8f9fa; padding: 20px; border-radius: 6px; border: 1px solid #e9ecef;">
+					<form method="post" style="background: #f8f9fa; padding: 20px; border-radius: 6px; border: 1px solid #e9ecef; width: 25em">
 						<input type="hidden" name="prompt_action" value="<?php echo $editingPrompt ? 'update' : 'create'; ?>">
 						<?php if ( $editingPrompt ) : ?>
 							<input type="hidden" name="prompt_id" value="<?php echo $editingPrompt['id']; ?>">
 						<?php endif; ?>
 
-						<div style="margin-bottom: 15px;">
+						<div style="margin-bottom: 15px; margin-right: 15px">
 							<label style="display: block; margin-bottom: 5px; font-weight: bold;">Name:</label>
 							<input type="text" name="prompt_name" required
 									value="<?php echo htmlspecialchars( $editingPrompt['name'] ?? '' ); ?>"
 									style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
 						</div>
 
-						<div style="margin-bottom: 15px;">
+						<div style="margin-bottom: 15px; margin-right: 15px">
 							<label style="display: block; margin-bottom: 5px; font-weight: bold;">Description:</label>
 							<input type="text" name="prompt_description"
 									value="<?php echo htmlspecialchars( $editingPrompt['description'] ?? '' ); ?>"
 									style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
 						</div>
 
-						<div style="margin-bottom: 15px;">
+						<div style="margin-bottom: 15px; margin-right: 15px">
 							<label style="display: block; margin-bottom: 5px; font-weight: bold;">Prompt Content:</label>
 							<textarea name="prompt_content" required rows="6"
 										style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; resize: vertical;"><?php echo htmlspecialchars( $editingPrompt['prompt'] ?? '' ); ?></textarea>
 						</div>
 
-						<div style="margin-bottom: 15px;">
+						<div style="margin-bottom: 15px; margin-right: 15px">
 							<label>
 								<input type="checkbox" name="is_default" <?php echo ( $editingPrompt['is_default'] ?? false ) ? 'checked' : ''; ?>>
 								Set as default prompt
@@ -910,9 +910,7 @@ $text = preg_replace_callback(
 											</form>
 										</div>
 									</div>
-									<div style="background: #f8f9fa; padding: 10px; border-radius: 4px; font-family: monospace; font-size: 0.9em; white-space: pre-wrap; max-height: 150px; overflow-y: auto;">
-										<?php echo htmlspecialchars( $prompt['prompt'] ); ?>
-									</div>
+									<div style="background: #f8f9fa; padding: 10px; border-radius: 4px; font-family: monospace; font-size: 0.9em; white-space: pre-wrap; max-height: 150px; overflow: auto;"><?php echo htmlspecialchars( $prompt['prompt'] ); ?></div>
 									<div style="margin-top: 8px; font-size: 0.8em; color: #666;">
 										Created: <?php echo date( 'M j, Y g:i A', $prompt['created_at'] ); ?>
 										<?php if ( $prompt['updated_at'] != $prompt['created_at'] ) : ?>
