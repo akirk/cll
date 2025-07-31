@@ -1,24 +1,8 @@
 <?php
 
-use PHPUnit\Framework\TestCase;
-
 require_once __DIR__ . '/../includes/MessageStreamer.php';
 
-class FixtureTestCase extends PHPUnit\Framework\TestCase {
-	protected function assertStringEqualsFileOrWrite( $expected_file_path, $actual_content ) {
-		if ( ! file_exists( $expected_file_path ) ) {
-			$dir = dirname( $expected_file_path );
-			if ( ! is_dir( $dir ) ) {
-				mkdir( $dir, 0755, true );
-			}
-			file_put_contents( $expected_file_path, $actual_content );
-			file_put_contents( 'php://stderr', 'Updated fixture: ' . basename( $expected_file_path ) . "\n" );
-		}
-		return $this->assertStringEqualsFile( $expected_file_path, $actual_content );
-	}
-}
-
-class MessageStreamerTest extends FixtureTestCase {
+class MessageStreamerTest extends TestCase {
 
 	private MessageStreamer $streamer;
 
@@ -188,7 +172,7 @@ class MessageStreamerTest extends FixtureTestCase {
 
 	public function testTokenStreamMathExpressions() {
 		// Test math expressions split across tokens
-		$mathTokens = array( '\\[', " \\frac{", 'a}{', 'b} ', '\\]' );
+		$mathTokens = array( '\\', '[', " \\frac{", 'a}{', 'b} ', '\\', ']' );
 
 		iterator_to_array( $this->streamer->outputMessage( '' ) );
 		$this->streamer->clearChunks();
@@ -202,42 +186,71 @@ class MessageStreamerTest extends FixtureTestCase {
 		$this->assertEquals( '(a)/(b)', $output );
 	}
 
-	private function runFixtureTest( $streamer, $expected_dir ) {
+	public static function fixtureProvider() {
 		$fixturesDir = __DIR__ . '/fixtures/input';
 		$inputFiles = glob( $fixturesDir . '/*.json' );
 
-		$this->assertNotEmpty( $inputFiles, 'No input fixture files found' );
-
+		$data = array();
 		foreach ( $inputFiles as $inputFile ) {
 			$filename = basename( $inputFile, '.json' );
-			$expectedFile = $expected_dir . '/' . $filename . '-output.txt';
-
-			// Load token stream from fixture
-			$tokens = json_decode( file_get_contents( $inputFile ), true );
-			$this->assertIsArray( $tokens, "Failed to decode JSON from $inputFile" );
-
-			// Clear any existing state
-			iterator_to_array( $streamer->outputMessage( '' ) );
-			$streamer->clearChunks();
-
-			// Process each token individually to simulate streaming
-			$output = '';
-			foreach ( $tokens as $token ) {
-				$result = iterator_to_array( $streamer->outputMessage( $token ) );
-				$output .= implode( '', $result );
-			}
-
-			// Compare output against fixture
-			$this->assertStringEqualsFileOrWrite( $expectedFile, $output );
+			$data[ $filename ] = array(
+				$inputFile,
+				$filename,
+			);
 		}
+
+		return $data;
 	}
 
-	public function testAllInputFixtures() {
-		$this->runFixtureTest( $this->streamer, __DIR__ . '/fixtures/expected/' );
+	/**
+	 * @dataProvider fixtureProvider
+	 */
+	public function testInputFixtures( $inputFile, $filename ) {
+		$streamer = new MessageStreamer( false );
+		$expectedFile = __DIR__ . '/fixtures/expected/' . $filename . '-output.txt';
+
+		// Load token stream from fixture
+		$tokens = json_decode( file_get_contents( $inputFile ), true );
+		$this->assertIsArray( $tokens, "Failed to decode JSON from $inputFile" );
+
+		// Clear any existing state
+		iterator_to_array( $streamer->outputMessage( '' ) );
+		$streamer->clearChunks();
+
+		// Process each token individually to simulate streaming
+		$output = '';
+		foreach ( $tokens as $token ) {
+			$result = iterator_to_array( $streamer->outputMessage( $token ) );
+			$output .= implode( '', $result );
+		}
+
+		// Compare output against fixture
+		$this->assertStringEqualsFileOrWrite( $expectedFile, $output );
 	}
 
-	public function testAllInputFixturesWithAnsi() {
-		$ansiStreamer = new MessageStreamer( true );
-		$this->runFixtureTest( $ansiStreamer, __DIR__ . '/fixtures/expected-ansi/' );
+	/**
+	 * @dataProvider fixtureProvider
+	 */
+	public function testInputFixturesWithAnsi( $inputFile, $filename ) {
+		$streamer = new MessageStreamer( true );
+		$expectedFile = __DIR__ . '/fixtures/expected-ansi/' . $filename . '-output.txt';
+
+		// Load token stream from fixture
+		$tokens = json_decode( file_get_contents( $inputFile ), true );
+		$this->assertIsArray( $tokens, "Failed to decode JSON from $inputFile" );
+
+		// Clear any existing state
+		iterator_to_array( $streamer->outputMessage( '' ) );
+		$streamer->clearChunks();
+
+		// Process each token individually to simulate streaming
+		$output = '';
+		foreach ( $tokens as $token ) {
+			$result = iterator_to_array( $streamer->outputMessage( $token ) );
+			$output .= implode( '', $result );
+		}
+
+		// Compare output against fixture
+		$this->assertStringEqualsFileOrWrite( $expectedFile, $output );
 	}
 }

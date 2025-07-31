@@ -20,6 +20,7 @@ class MessageStreamer {
 		'math_buffer'           => '',
 		'math_type'             => false, // false, 'inline_paren', 'inline_dollar', 'display_bracket', 'display_dollar'
 		'math_start_pos'        => 0,
+		'pending_backslash'     => false, // true when we see a backslash at end of token
 	);
 
 	public function __construct( bool $ansi = false ) {
@@ -166,23 +167,23 @@ class MessageStreamer {
 	}
 
 	public function convertLatexToUnicode( string $text ): string {
-return preg_replace_callback(
-    '/\\\\\[([^\]]+)\\\\\]|\\\\\(([^)]+)\\\\\)|\$\$([^$]+)\$\$|\$([^$]+)\$/',
-    function ( $matches ) {
-     // Find which group matched
-     $latex = '';
-     for ( $i = 1; $i <= 4; $i++ ) {
-      if ( isset( $matches[ $i ] ) && $matches[ $i ] !== '' ) {
-       $latex = $matches[ $i ];
-       break;
-      }
-     }
+		return preg_replace_callback(
+			'/\\\\\[([^\]]+)\\\\\]|\\\\\(([^)]+)\\\\\)|\$\$([^$]+)\$\$|\$([^$]+)\$/',
+			function ( $matches ) {
+			// Find which group matched
+				$latex = '';
+				for ( $i = 1; $i <= 4; $i++ ) {
+					if ( isset( $matches[ $i ] ) && $matches[ $i ] !== '' ) {
+						$latex = $matches[ $i ];
+						break;
+					}
+				}
 
-     // Convert the inner LaTeX content
-     return $this->convertLatexInnerContent( $latex );
-    },
-    $text
-);
+		     // Convert the inner LaTeX content
+				return $this->convertLatexInnerContent( $latex );
+			},
+			$text
+		);
 	}
 
 	public function outputMessage( string $message ): \Generator {
@@ -289,16 +290,47 @@ return preg_replace_callback(
 			if ( ! $this->state['in_code_block'] && ! $this->state['code_block_start'] ) {
 				// Check for start of math expressions
 				if ( ! $this->state['math_type'] ) {
-					// Look for \[ (display math)
-					if ( $message[ $i ] === '\\' && isset( $message[ $i + 1 ] ) && $message[ $i + 1 ] === '[' ) {
+					// Handle pending backslash from previous token
+					if ( $this->state['pending_backslash'] ) {
+						if ( $message[ $i ] === '[' ) {
+							$this->state['math_type'] = 'display_bracket';
+							$this->state['math_buffer'] = '\\[';
+							$this->state['math_start_pos'] = $i - 1; // Account for backslash from previous token
+							$this->state['pending_backslash'] = false;
+							++$i;
+							continue;
+						} elseif ( $message[ $i ] === '(' ) {
+							$this->state['math_type'] = 'inline_paren';
+							$this->state['math_buffer'] = '\\(';
+							$this->state['math_start_pos'] = $i - 1; // Account for backslash from previous token
+							$this->state['pending_backslash'] = false;
+							++$i;
+							continue;
+						} else {
+							// Not a math delimiter, output the pending backslash
+							yield '\\';
+							$this->state['pending_backslash'] = false;
+							// Continue processing current character
+						}
+					}
+
+					// Look for \[ (display math) - check substring to handle split tokens
+					if ( $i < $length - 1 && substr( $message, $i, 2 ) === '\\[' ) {
 						$this->state['math_type'] = 'display_bracket';
 						$this->state['math_buffer'] = '\\[';
 						$this->state['math_start_pos'] = $i;
 						$i += 2;
 						continue;
 					}
-					// Look for \( (inline math)
-					if ( $message[ $i ] === '\\' && isset( $message[ $i + 1 ] ) && $message[ $i + 1 ] === '(' ) {
+					// Also check for the case where backslash is at the very end and we need to wait for next token
+					if ( $i === $length - 1 && $message[ $i ] === '\\' ) {
+						// We're at the end with a backslash, mark it as pending
+						$this->state['pending_backslash'] = true;
+						++$i;
+						continue;
+					}
+					// Look for \( (inline math) - check substring to handle split tokens
+					if ( $i < $length - 1 && substr( $message, $i, 2 ) === '\\(' ) {
 						$this->state['math_type'] = 'inline_paren';
 						$this->state['math_buffer'] = '\\(';
 						$this->state['math_start_pos'] = $i;
@@ -306,7 +338,7 @@ return preg_replace_callback(
 						continue;
 					}
 					// Look for $$ (display math)
-					if ( $message[ $i ] === '$' && isset( $message[ $i + 1 ] ) && $message[ $i + 1 ] === '$' ) {
+					if ( $i < $length - 1 && substr( $message, $i, 2 ) === '$$' ) {
 						$this->state['math_type'] = 'display_dollar';
 						$this->state['math_buffer'] = '$$';
 						$this->state['math_start_pos'] = $i;
@@ -325,13 +357,14 @@ return preg_replace_callback(
 					// We're inside a math expression, buffer it
 					$this->state['math_buffer'] .= $message[ $i ];
 
-					// Check for end of math expressions
+					// Check for end of math expressions using substring to handle split tokens
 					$shouldClose = false;
-					if ( $this->state['math_type'] === 'display_bracket' && $message[ $i ] === ']' && isset( $message[ $i - 1 ] ) && $message[ $i - 1 ] === '\\' ) {
+					$bufferLen = strlen( $this->state['math_buffer'] );
+					if ( $this->state['math_type'] === 'display_bracket' && $bufferLen >= 2 && substr( $this->state['math_buffer'], -2 ) === '\\]' ) {
 						$shouldClose = true;
-					} elseif ( $this->state['math_type'] === 'inline_paren' && $message[ $i ] === ')' && isset( $message[ $i - 1 ] ) && $message[ $i - 1 ] === '\\' ) {
+					} elseif ( $this->state['math_type'] === 'inline_paren' && $bufferLen >= 2 && substr( $this->state['math_buffer'], -2 ) === '\\)' ) {
 						$shouldClose = true;
-					} elseif ( $this->state['math_type'] === 'display_dollar' && $message[ $i ] === '$' && isset( $message[ $i - 1 ] ) && $message[ $i - 1 ] === '$' ) {
+					} elseif ( $this->state['math_type'] === 'display_dollar' && $bufferLen >= 2 && substr( $this->state['math_buffer'], -2 ) === '$$' ) {
 						$shouldClose = true;
 					} elseif ( $this->state['math_type'] === 'inline_dollar' && $message[ $i ] === '$' ) {
 						$shouldClose = true;
