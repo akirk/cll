@@ -41,26 +41,26 @@ function chatgpt( $messages ) {
 	$ch = curl_init();
 	curl_setopt( $ch, CURLOPT_URL, 'https://api.openai.com/v1/chat/completions' );
 	curl_setopt( $ch, CURLOPT_RETURNTRANSFER, 1 );
-	curl_setopt(
-		$ch,
-		CURLOPT_HTTPHEADER,
-		array(
-			'Content-Type: application/json',
-			'Authorization: Bearer ' . $openai_key,
-		)
-	);
+curl_setopt(
+    $ch,
+    CURLOPT_HTTPHEADER,
+    array(
+    'Content-Type: application/json',
+    'Authorization: Bearer ' . $openai_key,
+    )
+);
 
-	curl_setopt(
-		$ch,
-		CURLOPT_POSTFIELDS,
-		json_encode(
-			array(
-				'model'     => 'gpt-3.5-turbo-0613',
-				'messages'  => $messages,
-				'functions' => $functions,
-			)
-		)
-	);
+curl_setopt(
+    $ch,
+    CURLOPT_POSTFIELDS,
+    json_encode(
+        array(
+        'model'     => 'gpt-3.5-turbo-0613',
+        'messages'  => $messages,
+        'functions' => $functions,
+        )
+    )
+);
 	$output = json_decode( curl_exec( $ch ), true );
 	if ( isset( $output['error'] ) ) {
 		echo $output['error']['message'], PHP_EOL;

@@ -30,12 +30,12 @@ if ( isset( $_GET['ajax'] ) && $_GET['ajax'] === 'load_more' ) {
 		$html .= renderConversationItem( $storage, $id );
 	}
 
-	echo json_encode(
-		array(
-			'html'    => $html,
-			'hasMore' => count( $conversations ) === $limit,
-		)
-	);
+echo json_encode(
+    array(
+    'html'    => $html,
+    'hasMore' => count( $conversations ) === $limit,
+    )
+);
 	exit;
 }
 
@@ -219,15 +219,15 @@ function renderMarkdown( $text ) {
 	$mathCounter = 0;
 
 	// Find and replace math expressions with placeholders
-	$text = preg_replace_callback(
-		'/\\\\\[([^\]]+)\\\\\]|\\\\\(([^)]+)\\\\\)|\$\$([^$]+)\$\$|\$([^$]+)\$/',
-		function ( $matches ) use ( &$mathExpressions, &$mathCounter ) {
-			$placeholder = 'MATHPLACEHOLDER' . $mathCounter++;
-			$mathExpressions[ $placeholder ] = $matches[0]; // Store the full match
-			return $placeholder;
-		},
-		$text
-	);
+$text = preg_replace_callback(
+    '/\\\\\[([^\]]+)\\\\\]|\\\\\(([^)]+)\\\\\)|\$\$([^$]+)\$\$|\$([^$]+)\$/',
+    function ( $matches ) use ( &$mathExpressions, &$mathCounter ) {
+     $placeholder = 'MATHPLACEHOLDER' . $mathCounter++;
+     $mathExpressions[ $placeholder ] = $matches[0]; // Store the full match
+     return $placeholder;
+    },
+    $text
+);
 
 	// Now HTML escape the text with placeholders
 	$escapedText = htmlspecialchars( $text );
@@ -346,14 +346,14 @@ function processInlineFormatting( $text ) {
 	$mathCounter = 0;
 
 	// Find and replace math expressions with placeholders
-	$text = preg_replace_callback(
-		'/MATHPLACEHOLDER\d+/',
-		function ( $matches ) use ( &$mathExpressions, &$mathCounter ) {
-			// If it's already a placeholder, keep it as is
-			return $matches[0];
-		},
-		$text
-	);
+$text = preg_replace_callback(
+    '/MATHPLACEHOLDER\d+/',
+    function ( $matches ) use ( &$mathExpressions, &$mathCounter ) {
+     // If it's already a placeholder, keep it as is
+     return $matches[0];
+    },
+    $text
+);
 
 	// Process inline code first to protect it
 	$text = preg_replace( '/`([^`]+)`/', '<code>$1</code>', $text );
@@ -944,7 +944,7 @@ function processInlineFormatting( $text ) {
 			arsort( $tagStats );
 
 			// Day of week statistics
-			$dayStats = $db->query(
+$dayStats = $db->query(
 				"
                 SELECT 
                     CASE strftime('%w', created_at, 'unixepoch')
@@ -961,10 +961,10 @@ function processInlineFormatting( $text ) {
                 GROUP BY strftime('%w', created_at, 'unixepoch')
                 ORDER BY strftime('%w', created_at, 'unixepoch')
             "
-			)->fetchAll( PDO::FETCH_ASSOC );
+)->fetchAll( PDO::FETCH_ASSOC );
 
 			// Hour of day statistics
-			$hourStats = $db->query(
+$hourStats = $db->query(
 				"
                 SELECT 
                     strftime('%H', created_at, 'unixepoch') as hour,
@@ -973,10 +973,10 @@ function processInlineFormatting( $text ) {
                 GROUP BY strftime('%H', created_at, 'unixepoch')
                 ORDER BY hour
             "
-			)->fetchAll( PDO::FETCH_ASSOC );
+)->fetchAll( PDO::FETCH_ASSOC );
 
 			// Monthly statistics (last 12 months)
-			$monthStats = $db->query(
+$monthStats = $db->query(
 				"
                 SELECT 
                     strftime('%Y-%m', created_at, 'unixepoch') as month,
@@ -986,7 +986,7 @@ function processInlineFormatting( $text ) {
                 GROUP BY strftime('%Y-%m', created_at, 'unixepoch')
                 ORDER BY month DESC
             "
-			)->fetchAll( PDO::FETCH_ASSOC );
+)->fetchAll( PDO::FETCH_ASSOC );
 
 			?>
 			

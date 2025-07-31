@@ -81,12 +81,12 @@ class FileLogStorage extends LogStorage {
 
 			if ( $search ) {
 				$moreHistoryFiles = array_filter(
-					$moreHistoryFiles,
-					function ( $file ) use ( $search ) {
-						$fileContents = file_get_contents( $file );
-						return false !== stripos( $fileContents, $search );
-					},
-					ARRAY_FILTER_USE_KEY
+        $moreHistoryFiles,
+        function ( $file ) use ( $search ) {
+         $fileContents = file_get_contents( $file );
+         return false !== stripos( $fileContents, $search );
+        },
+        ARRAY_FILTER_USE_KEY
 				);
 			}
 
@@ -220,12 +220,12 @@ class ConversationImporter {
 		}
 
 		// Sort by creation date (oldest first)
-		usort(
-			$conversationsWithDates,
-			function ( $a, $b ) {
-				return $a['created_at'] <=> $b['created_at'];
-			}
-		);
+usort(
+    $conversationsWithDates,
+    function ( $a, $b ) {
+     return $a['created_at'] <=> $b['created_at'];
+    }
+);
 
 		echo 'Found ' . count( $conversationsWithDates ) . " conversations to process (sorted oldest first).\n\n";
 
@@ -352,12 +352,12 @@ class ConversationImporter {
 
 			if ( $format === 'table' ) {
 				printf(
-					"%-12s %-15s %-8d %-8d %s\n",
-					$conversationId,
-					substr( $metadata['model'], 0, 14 ),
-					$metadata['answers'],
-					$metadata['word_count'],
-					$created
+        "%-12s %-15s %-8d %-8d %s\n",
+        $conversationId,
+        substr( $metadata['model'], 0, 14 ),
+        $metadata['answers'],
+        $metadata['word_count'],
+        $created
 				);
 			} else {
 				echo "$conversationId: {$metadata['model']} ({$metadata['answers']} answers, $created)\n";

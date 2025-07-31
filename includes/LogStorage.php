@@ -72,8 +72,8 @@ class SQLiteLogStorage extends LogStorage {
 		$this->db->setAttribute( PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION );
 
 		// Create tables
-		$this->db->exec(
-			"
+$this->db->exec(
+    "
             CREATE TABLE IF NOT EXISTS conversations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 model TEXT NOT NULL,
@@ -82,10 +82,10 @@ class SQLiteLogStorage extends LogStorage {
                 tags TEXT DEFAULT ''
             )
         "
-		);
+);
 
-		$this->db->exec(
-			"
+$this->db->exec(
+    "
             CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 conversation_id INTEGER NOT NULL,
@@ -95,10 +95,10 @@ class SQLiteLogStorage extends LogStorage {
                 FOREIGN KEY (conversation_id) REFERENCES conversations(id)
             )
         "
-		);
+);
 
-		$this->db->exec(
-			'
+$this->db->exec(
+    '
             CREATE TABLE IF NOT EXISTS system_prompts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL UNIQUE,
@@ -109,7 +109,7 @@ class SQLiteLogStorage extends LogStorage {
                 updated_at INTEGER NOT NULL
             )
         '
-		);
+);
 
 		$this->db->exec( 'CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id)' );
 		$this->db->exec( 'CREATE INDEX IF NOT EXISTS idx_conversations_created ON conversations(created_at DESC)' );
@@ -120,12 +120,12 @@ class SQLiteLogStorage extends LogStorage {
 		$existingPrompts = $this->db->query( 'SELECT COUNT(*) FROM system_prompts' )->fetchColumn();
 		if ( $existingPrompts == 0 ) {
 			$time = time();
-			$stmt = $this->db->prepare(
+$stmt = $this->db->prepare(
 				'
                 INSERT INTO system_prompts (name, prompt, description, is_default, created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?)
             '
-			);
+);
 			$stmt->execute( array( 'default', '', 'Default empty system prompt', 1, $time, $time ) );
 		}
 	}
@@ -135,12 +135,12 @@ class SQLiteLogStorage extends LogStorage {
 		$createdAt = $createdAt ?: time();
 		$time = time();
 
-		$stmt = $this->db->prepare(
-			'
+$stmt = $this->db->prepare(
+    '
             INSERT INTO conversations (model, created_at, updated_at)
             VALUES (?, ?, ?)
         '
-		);
+);
 		$stmt->execute( array( $model, $createdAt, $time ) );
 		return $this->db->lastInsertId();
 	}
@@ -181,32 +181,32 @@ class SQLiteLogStorage extends LogStorage {
 
 	private function writeMessage( $conversationId, $role, $content, $createdAt = null ) {
 		$createdAt = $createdAt ?: time();
-		$stmt = $this->db->prepare(
-			'
+$stmt = $this->db->prepare(
+    '
             INSERT INTO messages (conversation_id, role, content, created_at) 
             VALUES (?, ?, ?, ?)
         '
-		);
+);
 		$stmt->execute( array( $conversationId, $role, $content, $createdAt ) );
 
 		// Update conversation timestamp
-		$updateStmt = $this->db->prepare(
-			'
+$updateStmt = $this->db->prepare(
+    '
             UPDATE conversations SET updated_at = ? WHERE id = ?
         '
-		);
+);
 		$updateStmt->execute( array( $createdAt, $conversationId ) );
 	}
 
 	public function loadConversation( $conversationId ) {
-		$stmt = $this->db->prepare(
-			'
+$stmt = $this->db->prepare(
+    '
             SELECT role, content, created_at 
             FROM messages 
             WHERE conversation_id = ? 
             ORDER BY created_at ASC
         '
-		);
+);
 		$stmt->execute( array( $conversationId ) );
 
 		$result = array();
@@ -223,8 +223,8 @@ class SQLiteLogStorage extends LogStorage {
 
 
 	public function getConversationMetadata( $conversationId ) {
-		$stmt = $this->db->prepare(
-			'
+$stmt = $this->db->prepare(
+    '
             SELECT c.*, 
                    COUNT(m.id) as message_count,
                    SUM(LENGTH(m.content)) as word_count
@@ -233,7 +233,7 @@ class SQLiteLogStorage extends LogStorage {
             WHERE c.id = ?
             GROUP BY c.id
         '
-		);
+);
 		$stmt->execute( array( $conversationId ) );
 
 		$row = $stmt->fetch( PDO::FETCH_ASSOC );
@@ -242,13 +242,13 @@ class SQLiteLogStorage extends LogStorage {
 		}
 
 		// Count assistant messages (answers)
-		$answerStmt = $this->db->prepare(
-			"
+$answerStmt = $this->db->prepare(
+    "
             SELECT COUNT(*) as answers 
             FROM messages 
             WHERE conversation_id = ? AND role = 'assistant'
         "
-		);
+);
 		$answerStmt->execute( array( $conversationId ) );
 		$answers = $answerStmt->fetch( PDO::FETCH_ASSOC )['answers'];
 
@@ -266,25 +266,25 @@ class SQLiteLogStorage extends LogStorage {
 		$this->db->beginTransaction();
 		try {
 			// Copy conversation record
-			$stmt = $this->db->prepare(
+$stmt = $this->db->prepare(
 				'
                 INSERT INTO conversations (id, model, system_prompt, created_at, updated_at)
                 SELECT ?, model, system_prompt, ?, ?
                 FROM conversations WHERE id = ?
             '
-			);
+);
 			$time = time();
 			$stmt->execute( array( $targetId, $time, $time, $sourceId ) );
 
 			// Copy messages
-			$stmt = $this->db->prepare(
+$stmt = $this->db->prepare(
 				'
                 INSERT INTO messages (conversation_id, role, content, created_at)
                 SELECT ?, role, content, ?
                 FROM messages WHERE conversation_id = ?
                 ORDER BY created_at ASC
             '
-			);
+);
 			$stmt->execute( array( $targetId, $time, $sourceId ) );
 
 			$this->db->commit();
@@ -302,13 +302,13 @@ class SQLiteLogStorage extends LogStorage {
 
 	public function updateConversationTags( $conversationId ) {
 		// Get all messages in conversation
-		$stmt = $this->db->prepare(
-			'
+$stmt = $this->db->prepare(
+    '
             SELECT content, role FROM messages 
             WHERE conversation_id = ? 
             ORDER BY created_at ASC
         '
-		);
+);
 		$stmt->execute( array( $conversationId ) );
 		$messages = $stmt->fetchAll( PDO::FETCH_ASSOC );
 
@@ -530,12 +530,12 @@ class SQLiteLogStorage extends LogStorage {
 	}
 
 	public function getAllTags() {
-		$stmt = $this->db->prepare(
-			"
+$stmt = $this->db->prepare(
+    "
             SELECT DISTINCT tags FROM conversations 
             WHERE tags != '' AND tags IS NOT NULL
         "
-		);
+);
 		$stmt->execute();
 
 		$allTags = array();
@@ -588,12 +588,12 @@ class SQLiteLogStorage extends LogStorage {
 		$currentTags = $this->getConversationTags( $conversationId );
 		$tagToRemove = trim( $tagToRemove );
 
-		$filteredTags = array_filter(
-			$currentTags,
-			function ( $tag ) use ( $tagToRemove ) {
-				return $tag !== $tagToRemove;
-			}
-		);
+$filteredTags = array_filter(
+    $currentTags,
+    function ( $tag ) use ( $tagToRemove ) {
+     return $tag !== $tagToRemove;
+    }
+);
 
 		if ( count( $filteredTags ) !== count( $currentTags ) ) {
 			return $this->setConversationTags( $conversationId, $filteredTags );
@@ -622,12 +622,12 @@ class SQLiteLogStorage extends LogStorage {
 	}
 
 	public function getAllSystemPrompts() {
-		$stmt = $this->db->prepare(
-			'
+$stmt = $this->db->prepare(
+    '
             SELECT * FROM system_prompts
             ORDER BY is_default DESC, name ASC
         '
-		);
+);
 		$stmt->execute();
 		return $stmt->fetchAll( PDO::FETCH_ASSOC );
 	}
@@ -658,12 +658,12 @@ class SQLiteLogStorage extends LogStorage {
 			$this->db->exec( 'UPDATE system_prompts SET is_default = 0' );
 		}
 
-		$stmt = $this->db->prepare(
-			'
+$stmt = $this->db->prepare(
+    '
             INSERT INTO system_prompts (name, prompt, description, is_default, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?)
         '
-		);
+);
 
 		try {
 			$stmt->execute( array( $name, $prompt, $description, $isDefault ? 1 : 0, $time, $time ) );
@@ -684,13 +684,13 @@ class SQLiteLogStorage extends LogStorage {
 			$this->db->exec( 'UPDATE system_prompts SET is_default = 0' );
 		}
 
-		$stmt = $this->db->prepare(
-			'
+$stmt = $this->db->prepare(
+    '
             UPDATE system_prompts
             SET name = ?, prompt = ?, description = ?, is_default = ?, updated_at = ?
             WHERE id = ?
         '
-		);
+);
 
 		try {
 			return $stmt->execute( array( $name, $prompt, $description, $isDefault ? 1 : 0, $time, $id ) );
