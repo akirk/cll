@@ -24,7 +24,7 @@ function dont_auto_complete( $input, $index ) {
 	return array(); }
 
 
-$messageStreamer = new MessageStreamer($ansi);
+$messageStreamer = new MessageStreamer( $ansi );
 
 function convert_latex_to_unicode( $text ) {
 	global $messageStreamer;
@@ -80,14 +80,14 @@ if ( $online && isset( $options['m'] ) && $options['m'] == '' ) {
 	// Update models.
 	if ( ! empty( $openai_key ) ) {
 		curl_setopt( $ch, CURLOPT_URL, 'https://api.openai.com/v1/models' );
-		curl_setopt(
-			$ch,
-			CURLOPT_HTTPHEADER,
-			array(
+curl_setopt(
+    $ch,
+    CURLOPT_HTTPHEADER,
+    array(
 				'Content-Type: application/json',
 				'Authorization: Bearer ' . $openai_key,
-			)
-		);
+    )
+);
 
 		$response = curl_exec( $ch );
 		$data = json_decode( $response, true );
@@ -100,15 +100,15 @@ if ( $online && isset( $options['m'] ) && $options['m'] == '' ) {
 	}
 	if ( ! empty( $anthropic_key ) ) {
 		curl_setopt( $ch, CURLOPT_URL, 'https://api.anthropic.com/v1/models' );
-		curl_setopt(
-			$ch,
-			CURLOPT_HTTPHEADER,
-			array(
+curl_setopt(
+    $ch,
+    CURLOPT_HTTPHEADER,
+    array(
 				'x-api-key: ' . $anthropic_key,
 				'anthropic-version: 2023-06-01',
 				'Content-Type: application/json',
-			)
-		);
+    )
+);
 		$response = curl_exec( $ch );
 		$data = json_decode( $response, true );
 
@@ -191,27 +191,27 @@ if ( empty( $supported_models ) ) {
 
 $model_weight = array_flip( array_reverse( array( 'gpt-4o-mini', 'gemma3', 'llama3', 'llama2' ) ) );
 uksort(
-	$supported_models,
-	function ( $a, $b ) use ( $model_weight ) {
-		$a_weight = $b_weight = -1;
-		foreach ( $model_weight as $model => $weight ) {
-			if ( 0 === strpos( $a, $model ) ) {
-				$a_weight = $weight;
-			} elseif ( 0 === strpos( $b, $model ) ) {
-				$b_weight = $weight;
-			}
-		}
+    $supported_models,
+    function ( $a, $b ) use ( $model_weight ) {
+     $a_weight = $b_weight = -1;
+     foreach ( $model_weight as $model => $weight ) {
+      if ( 0 === strpos( $a, $model ) ) {
+       $a_weight = $weight;
+      } elseif ( 0 === strpos( $b, $model ) ) {
+       $b_weight = $weight;
+      }
+     }
 
-		if ( $a_weight > $b_weight ) {
-			return -1;
-		}
+     if ( $a_weight > $b_weight ) {
+      return -1;
+     }
 
-		if ( $a_weight < $b_weight ) {
-			return 1;
-		}
+     if ( $a_weight < $b_weight ) {
+      return 1;
+     }
 
-		return 0;
-	}
+     return 0;
+    }
 );
 
 $model = key( $supported_models );
@@ -385,17 +385,9 @@ if ( isset( $options['r'] ) ) {
 	} else {
 		// For specific conversation ID, we need to load the conversation data
 		$conversation_data = $logStorage->loadConversation( $specific_conversation_id );
-		// Convert SQLite format to simple array format
+		// Keep the full message format with role information for proper handling
 		if ( $conversation_data && is_array( $conversation_data ) ) {
-			$simple_split = array();
-			foreach ( $conversation_data as $msg ) {
-				if ( is_array( $msg ) && isset( $msg['content'] ) ) {
-					$simple_split[] = $msg['content'];
-				} else {
-					$simple_split[] = $msg;
-				}
-			}
-			$conversations[ $specific_conversation_id ] = $simple_split;
+			$conversations[ $specific_conversation_id ] = $conversation_data;
 		} else {
 			echo 'Conversation not found or empty.', PHP_EOL;
 			exit( 1 );
@@ -470,18 +462,7 @@ if ( isset( $options['r'] ) ) {
 
 				// Load conversation data
 				$split = $logStorage->loadConversation( $conversation_key );
-				// Convert SQLite format to simple array format expected by the rest of the code
-				if ( $split && is_array( $split ) ) {
-					$simple_split = array();
-					foreach ( $split as $msg ) {
-						if ( is_array( $msg ) && isset( $msg['content'] ) ) {
-							$simple_split[] = $msg['content'];
-						} else {
-							$simple_split[] = $msg;
-						}
-					}
-					$split = $simple_split;
-				}
+				// Keep the full message format with role information for proper handling
 
 				if ( ! $split || count( $split ) < 2 ) {
 					unset( $conversations[ $conversation_key ] );
@@ -569,35 +550,40 @@ if ( isset( $options['r'] ) ) {
 		}
 
 		$first_message = $conversations[ $conversation_key ][0];
-		$first_content = is_array( $first_message ) && isset( $first_message['content'] ) ? $first_message['content'] : $first_message;
+		$first_role = is_array( $first_message ) && isset( $first_message['role'] ) ? $first_message['role'] : null;
 
-		if ( substr( $first_content, 0, 7 ) === 'System:' ) {
-			$system = substr( $first_content, 8, strpos( $first_content, PHP_EOL ) - 8 );
-			$remaining_content = substr( $first_content, strlen( $system ) + 9 );
+		// Check for system prompt in SQLite format (role='system')
+		if ( $first_role === 'system' ) {
+			$system = $first_message['content'];
 			$system_prompt_name = null; // Resume case - no name available
 
-			// Update the first message with the remaining content
-			if ( is_array( $conversations[ $conversation_key ][0] ) ) {
-				$conversations[ $conversation_key ][0]['content'] = $remaining_content;
-			} else {
-				$conversations[ $conversation_key ][0] = $remaining_content;
-			}
+			// Remove the system message from conversation data since it's now handled separately
+			array_shift( $conversations[ $conversation_key ] );
 
 			if ( isset( $options['s'] ) && $options['s'] ) {
 				echo 'Old System prompt: ' . $system, PHP_EOL, 'New ';
 				$system = $options['s'];
 				$system_prompt_name = null; // Override case - custom prompt
 			}
-			echo 'System prompt: ', $system, PHP_EOL;
+
+			if ( isset( $options['v'] ) ) {
+				echo 'System prompt: ', $system, PHP_EOL;
+			} else {
+				$words = preg_split( '/\s+/', $system, 11 );
+				if ( isset( $words[10] ) ) {
+					$words[10] = '...';
+				}
+				echo 'System prompt: ', implode( ' ', $words ), PHP_EOL;
+			}
 			if ( $model_provider === 'Anthropic' ) {
 				$wrapper['system'] = $system;
 			} else {
 				array_unshift(
-					$messages,
-					array(
-						'role'    => 'system',
-						'content' => $system,
-					)
+        $messages,
+        array(
+        'role'    => 'system',
+        'content' => $system,
+        )
 				);
 			}
 		}
@@ -610,17 +596,25 @@ if ( isset( $options['r'] ) ) {
 
 			// Handle both string messages and array format from SQLite
 			$content = is_array( $message ) && isset( $message['content'] ) ? $message['content'] : $message;
+			$role = is_array( $message ) && isset( $message['role'] ) ? $message['role'] : ( $k % 2 ? 'assistant' : 'user' );
+
+			// Skip system messages when outputting conversation history
+			if ( $role === 'system' ) {
+				continue;
+			}
 
 			$messages[] = array(
-				'role'    => $k % 2 ? 'assistant' : 'user',
+				'role'    => $role,
 				'content' => $content,
 			);
 
-			if ( 0 === $k % 2 ) {
+			if ( $role === 'user' ) {
 				echo '> ';
 			}
+
 			output_message( $content . PHP_EOL );
 		}
+
 		if ( isset( $options['d'] ) ) {
 			$initial_input = ' ';
 			// Answer the question right away.
@@ -661,13 +655,13 @@ if ( isset( $options['r'] ) ) {
 		if ( $model_provider === 'Anthropic' ) {
 			$wrapper['system'] = $system;
 		} else {
-			array_unshift(
+array_unshift(
 				$messages,
 				array(
 					'role'    => 'system',
 					'content' => $system,
 				)
-			);
+);
 		}
 	}
 	if ( trim( $initial_input ) ) {
@@ -706,55 +700,55 @@ if ( 'OpenAI' === $model_provider ) {
 $chunk_overflow = '';
 curl_setopt( $ch, CURLOPT_HTTPHEADER, $headers );
 curl_setopt(
-	$ch,
-	CURLOPT_WRITEFUNCTION,
-	function ( $curl, $data ) use ( &$message, &$chunk_overflow, &$usage, $model_provider ) {
-		if ( 200 !== curl_getinfo( $curl, CURLINFO_HTTP_CODE ) ) {
-			$error = json_decode( trim( $chunk_overflow . $data ), true );
-			if ( $error ) {
-				echo 'Error: ', $error['error']['message'], PHP_EOL;
-			} else {
-				$chunk_overflow .= $data;
-			}
-			return strlen( $data );
-		}
-		$items = explode( 'data: ', $data );
-		foreach ( $items as $item ) {
-			if ( ! $item ) {
-				continue;
-			}
-			$json = json_decode( trim( $chunk_overflow . $item ), true );
-			if ( $json ) {
-				$chunk_overflow = '';
-			} else {
-				$json = json_decode( trim( $item ), true );
-			}
+    $ch,
+    CURLOPT_WRITEFUNCTION,
+    function ( $curl, $data ) use ( &$message, &$chunk_overflow, &$usage, $model_provider ) {
+     if ( 200 !== curl_getinfo( $curl, CURLINFO_HTTP_CODE ) ) {
+      $error = json_decode( trim( $chunk_overflow . $data ), true );
+      if ( $error ) {
+       echo 'Error: ', $error['error']['message'], PHP_EOL;
+      } else {
+       $chunk_overflow .= $data;
+      }
+      return strlen( $data );
+     }
+     $items = explode( 'data: ', $data );
+     foreach ( $items as $item ) {
+      if ( ! $item ) {
+       continue;
+      }
+      $json = json_decode( trim( $chunk_overflow . $item ), true );
+      if ( $json ) {
+       $chunk_overflow = '';
+      } else {
+       $json = json_decode( trim( $item ), true );
+      }
 
-			if ( isset( $json['message']['usage'] ) ) {
-				$usage = array_merge( $usage, $json['message']['usage'] );
-			} elseif ( isset( $json['usage'] ) ) {
-				$usage = array_merge( $usage, $json['usage'] );
-			}
+      if ( isset( $json['message']['usage'] ) ) {
+       $usage = array_merge( $usage, $json['message']['usage'] );
+      } elseif ( isset( $json['usage'] ) ) {
+       $usage = array_merge( $usage, $json['usage'] );
+      }
 
-			if ( $model_provider === 'Anthropic' ) {
-				if ( isset( $json['delta']['text'] ) ) {
-					output_message( $json['delta']['text'] );
+      if ( $model_provider === 'Anthropic' ) {
+       if ( isset( $json['delta']['text'] ) ) {
+        output_message( $json['delta']['text'] );
 
-					$message .= $json['delta']['text'];
-				} else {
-					$chunk_overflow = $item;
-				}
-			} elseif ( isset( $json['choices'][0]['delta']['content'] ) ) {
-					output_message( $json['choices'][0]['delta']['content'] );
+        $message .= $json['delta']['text'];
+       } else {
+        $chunk_overflow = $item;
+       }
+      } elseif ( isset( $json['choices'][0]['delta']['content'] ) ) {
+        output_message( $json['choices'][0]['delta']['content'] );
 
-					$message .= $json['choices'][0]['delta']['content'];
-			} else {
-				$chunk_overflow = $item;
-			}
-		}
+        $message .= $json['choices'][0]['delta']['content'];
+      } else {
+       $chunk_overflow = $item;
+      }
+     }
 
-		return strlen( $data );
-	}
+     return strlen( $data );
+    }
 );
 
 // Start chatting.
@@ -994,13 +988,13 @@ while ( true ) {
 		);
 	}
 
-	curl_setopt(
-		$ch,
-		CURLOPT_POSTFIELDS,
-		json_encode(
-			$wrapper
-		)
-	);
+curl_setopt(
+    $ch,
+    CURLOPT_POSTFIELDS,
+    json_encode(
+        $wrapper
+    )
+);
 
 	if ( $ansi || isset( $options['v'] ) ) {
 		echo PHP_EOL;

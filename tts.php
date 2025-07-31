@@ -103,25 +103,25 @@ function wave( $numChannels, $sampleRate, $bitsPerSample, $durationSeconds ) {
 	$blockAlign = $numChannels * $bitsPerSample / 8;
 	$dataSize = $numSamples * $blockAlign;
 
-	return pack(
-		'a*Va*a*VvvVVvva*V',
-		// Header
-		'RIFF',
-		44 + $dataSize - 8,
-		'WAVE',
-		// First chunk with audio format PCM (1)
-		'fmt ',
-		16,
-		1,
-		$numChannels,
-		$sampleRate,
-		$byteRate,
-		$blockAlign,
-		$bitsPerSample,
-		// Second chunk
-		'data',
-		$dataSize
-	);
+return pack(
+    'a*Va*a*VvvVVvva*V',
+    // Header
+    'RIFF',
+    44 + $dataSize - 8,
+    'WAVE',
+    // First chunk with audio format PCM (1)
+    'fmt ',
+    16,
+    1,
+    $numChannels,
+    $sampleRate,
+    $byteRate,
+    $blockAlign,
+    $bitsPerSample,
+    // Second chunk
+    'data',
+    $dataSize
+);
 }
 
 file_put_contents( $output_filename, wave( 1, 24000, 16, 0 ) );
@@ -136,60 +136,60 @@ $usage = array();
 $chunk_overflow = '';
 curl_setopt( $ch, CURLOPT_HTTPHEADER, $headers );
 curl_setopt(
-	$ch,
-	CURLOPT_WRITEFUNCTION,
-	function ( $curl, $data ) use ( &$message, &$chunk_overflow, &$usage, $output_filename ) {
-		if ( 200 !== curl_getinfo( $curl, CURLINFO_HTTP_CODE ) ) {
-			$error = json_decode( trim( $chunk_overflow . $data ), true );
-			if ( $error ) {
-				echo 'Error: ', $error['error']['message'], PHP_EOL;
-			} else {
-				$chunk_overflow .= $data;
-			}
-			return strlen( $data );
-		}
-		$items = explode( 'data: ', $data );
-		foreach ( $items as $item ) {
-			if ( ! $item ) {
-				continue;
-			}
-			$json = json_decode( trim( $chunk_overflow . $item ), true );
-			if ( $json ) {
-				$chunk_overflow = '';
-			} else {
-				$json = json_decode( trim( $item ), true );
-			}
+    $ch,
+    CURLOPT_WRITEFUNCTION,
+    function ( $curl, $data ) use ( &$message, &$chunk_overflow, &$usage, $output_filename ) {
+     if ( 200 !== curl_getinfo( $curl, CURLINFO_HTTP_CODE ) ) {
+      $error = json_decode( trim( $chunk_overflow . $data ), true );
+      if ( $error ) {
+       echo 'Error: ', $error['error']['message'], PHP_EOL;
+      } else {
+       $chunk_overflow .= $data;
+      }
+      return strlen( $data );
+     }
+     $items = explode( 'data: ', $data );
+     foreach ( $items as $item ) {
+      if ( ! $item ) {
+       continue;
+      }
+      $json = json_decode( trim( $chunk_overflow . $item ), true );
+      if ( $json ) {
+       $chunk_overflow = '';
+      } else {
+       $json = json_decode( trim( $item ), true );
+      }
 
-			if ( isset( $json['message']['usage'] ) ) {
-				$usage = array_merge( $usage, $json['message']['usage'] );
-			} elseif ( isset( $json['usage'] ) ) {
-				$usage = array_merge( $usage, $json['usage'] );
-			}
-			if ( isset( $json['choices'][0]['delta']['content'] ) ) {
-				$message = $json['choices'][0]['delta']['content'];
-				if ( $message ) {
-					echo $message;
-				}
-			} elseif ( isset( $json['choices'][0]['delta']['audio'] ) ) {
-				if ( isset( $json['choices'][0]['delta']['audio']['transcript'] ) ) {
-					$message = $json['choices'][0]['delta']['audio']['transcript'];
-					if ( $message ) {
-						echo $message;
-					}
-				}
-				if ( isset( $json['choices'][0]['delta']['audio']['data'] ) ) {
-					$audio = base64_decode( $json['choices'][0]['delta']['audio']['data'] );
-					file_put_contents( $output_filename, $audio, FILE_APPEND );
-				}
-			} elseif ( isset( $json['choices'][0]['delta']['finish_reason'] ) ) {
-				echo PHP_EOL;
-			} else {
-				$chunk_overflow .= $item;
-			}
-		}
+      if ( isset( $json['message']['usage'] ) ) {
+       $usage = array_merge( $usage, $json['message']['usage'] );
+      } elseif ( isset( $json['usage'] ) ) {
+       $usage = array_merge( $usage, $json['usage'] );
+      }
+      if ( isset( $json['choices'][0]['delta']['content'] ) ) {
+       $message = $json['choices'][0]['delta']['content'];
+       if ( $message ) {
+        echo $message;
+       }
+      } elseif ( isset( $json['choices'][0]['delta']['audio'] ) ) {
+       if ( isset( $json['choices'][0]['delta']['audio']['transcript'] ) ) {
+        $message = $json['choices'][0]['delta']['audio']['transcript'];
+        if ( $message ) {
+         echo $message;
+        }
+       }
+       if ( isset( $json['choices'][0]['delta']['audio']['data'] ) ) {
+        $audio = base64_decode( $json['choices'][0]['delta']['audio']['data'] );
+        file_put_contents( $output_filename, $audio, FILE_APPEND );
+       }
+      } elseif ( isset( $json['choices'][0]['delta']['finish_reason'] ) ) {
+       echo PHP_EOL;
+      } else {
+       $chunk_overflow .= $item;
+      }
+     }
 
-		return strlen( $data );
-	}
+     return strlen( $data );
+    }
 );
 
 $response = curl_exec( $ch );

@@ -1,260 +1,256 @@
 <?php
 
-use PHPUnit\Framework\TestCase;
-
 require_once __DIR__ . '/../includes/MessageStreamer.php';
 
-class MessageStreamerTest extends TestCase
-{
-    private MessageStreamer $streamer;
+class MessageStreamerTest extends TestCase {
 
-    protected function setUp(): void
-    {
-        $this->streamer = new MessageStreamer(false); // No ANSI for testing
-    }
+	private MessageStreamer $streamer;
 
-    public function testFractionWithCdotParsing()
-    {
-        // Start with a clean output state
-        iterator_to_array($this->streamer->outputMessage(''));
-        
-        $testExpression = "\\[\n   \\frac{1(1 + 1)}{2} = \\frac{1 \\cdot 2}{2} = 1\n   \\]";
-        
-        // Collect output from generator
-        $result = implode('', iterator_to_array($this->streamer->outputMessage($testExpression)));
-        
-        // Expected: fractions converted to (numerator)/(denominator) format and \cdot converted to ⋅
-        $expected = "(1(1 + 1))/(2) = (1 ⋅ 2)/(2) = 1";
-        
-        $this->assertEquals($expected, $result);
-    }
-    
-    public function testBasicCdotSymbol()
-    {
-        iterator_to_array($this->streamer->outputMessage(''));
-        
-        $testExpression = "\\[ a \\cdot b \\]";
-        
-        $result = implode('', iterator_to_array($this->streamer->outputMessage($testExpression)));
-        
-        $expected = "a ⋅ b";
-        
-        $this->assertEquals($expected, $result);
-    }
-    
-    public function testFractionParsing()
-    {
-        iterator_to_array($this->streamer->outputMessage(''));
-        
-        $testExpression = "\\[ \\frac{x}{y} \\]";
-        
-        $result = implode('', iterator_to_array($this->streamer->outputMessage($testExpression)));
-        
-        $expected = "(x)/(y)";
-        
-        $this->assertEquals($expected, $result);
-    }
-    
-    public function testInlineMathWithCdot()
-    {
-        iterator_to_array($this->streamer->outputMessage(''));
-        
-        $testExpression = "\\( 2 \\cdot 3 \\)";
-        
-        $result = implode('', iterator_to_array($this->streamer->outputMessage($testExpression)));
-        
-        $expected = "2 ⋅ 3";
-        
-        $this->assertEquals($expected, $result);
-    }
+	protected function setUp(): void {
+		$this->streamer = new MessageStreamer( false ); // No ANSI for testing
+	}
 
-    public function testLatexToUnicodeConversion()
-    {
-        $testExpression = "\\[\n   \\frac{1(1 + 1)}{2} = \\frac{1 \\cdot 2}{2} = 1\n   \\]";
-        
-        $result = $this->streamer->convertLatexToUnicode($testExpression);
-        
-        $expected = "(1(1 + 1))/(2) = (1 ⋅ 2)/(2) = 1";
-        
-        $this->assertEquals($expected, $result);
-    }
+	public function testFractionParsing() {
+		iterator_to_array( $this->streamer->outputMessage( '' ) );
 
-    public function testDebugInfo()
-    {
-        // Clear any existing chunks
-        $this->streamer->clearChunks();
-        
-        // Process some messages
-        iterator_to_array($this->streamer->outputMessage('test1'));
-        iterator_to_array($this->streamer->outputMessage('test2'));
-        
-        $debugInfo = $this->streamer->getDebugInfo();
-        
-        $this->assertStringContainsString('Received 2 chunks:', $debugInfo);
-        $this->assertStringContainsString('"test1"', $debugInfo);
-        $this->assertStringContainsString('"test2"', $debugInfo);
-        
-        // Test clear chunks
-        $this->streamer->clearChunks();
-        $debugInfoAfterClear = $this->streamer->getDebugInfo();
-        $this->assertStringContainsString('Received 0 chunks:', $debugInfoAfterClear);
-    }
+		$testExpression = "\\[ \\frac{x}{y} \\]";
 
-    public function testTokenStreamProcessing()
-    {
-        // Test streaming the provided token array that builds "The Last Whisper" story
-        $tokens = ["**","Title",":"," The"," Last"," Whisper","**\n\n","In"," a"," **","forgot","ten"," village","**,"," a"," **","young"," girl","**"," discovers"," an"," **","anc","ient"," book","**"," that"," holds"," the"," **","se","crets"," of"," lost"," voices","**","."," Each"," page"," unlock","s"," a"," **","wh","isper"," from"," the"," past","**","."," As"," she"," speaks"," the"," words",","," long","-b","ur","ied"," **","mem","ories","**"," awaken",","," revealing"," an"," **","ep","ic"," tale"," of"," love","**,"," **","betr","ay","al","**,"," and"," the"," **","power"," of"," memories","**"," to"," change"," the"," future","."];
+		$result = implode( '', iterator_to_array( $this->streamer->outputMessage( $testExpression ) ) );
 
-        // Clear any existing state
-        iterator_to_array($this->streamer->outputMessage(''));
-        $this->streamer->clearChunks();
+		$expected = '(x)/(y)';
 
-        // Process each token individually to simulate streaming
-        $output = '';
-        foreach ($tokens as $token) {
-            $result = iterator_to_array($this->streamer->outputMessage($token));
-            $output .= implode('', $result);
-        }
+		$this->assertEquals( $expected, $result );
+	}
 
-        // Verify the tokens were stored
-        $this->assertEquals(count($tokens), count($this->streamer->getChunks()));
+	public function testInlineMathWithCdot() {
+		iterator_to_array( $this->streamer->outputMessage( '' ) );
 
-        // The output should contain the story text without markdown formatting (since ANSI is false)
-        $this->assertStringContainsString('Title: The Last Whisper', $output);
-        $this->assertStringContainsString('forgotten village', $output);
-        $this->assertStringContainsString('young girl', $output);
-        $this->assertStringContainsString('ancient book', $output);
-        $this->assertStringContainsString('secrets of lost voices', $output);
-        $this->assertStringContainsString('whisper from the past', $output);
-        $this->assertStringContainsString('memories', $output);
-        $this->assertStringContainsString('epic tale of love', $output);
-        $this->assertStringContainsString('betrayal', $output);
-        $this->assertStringContainsString('power of memories', $output);
-    }
+		$testExpression = '\\( 2 \\cdot 3 \\)';
 
-    public function testTokenStreamBoldFormatting()
-    {
-        // Test that bold markers are handled correctly during token streaming
-        $boldTokens = ["**", "bold", " text", "**", " normal"];
+		$result = implode( '', iterator_to_array( $this->streamer->outputMessage( $testExpression ) ) );
 
-        iterator_to_array($this->streamer->outputMessage(''));
-        $this->streamer->clearChunks();
+		$expected = '2 ⋅ 3';
 
-        $output = '';
-        foreach ($boldTokens as $token) {
-            $result = iterator_to_array($this->streamer->outputMessage($token));
-            $output .= implode('', $result);
-        }
+		$this->assertEquals( $expected, $result );
+	}
 
-        // Should contain the text without bold markers (since ANSI is false)
-        $this->assertStringContainsString('bold text normal', $output);
-        $this->assertStringNotContainsString('**', $output);
-    }
+	public function testLatexToUnicodeConversion() {
+		$testExpression = "\\[\n   \\frac{1(1 + 1)}{2} = \\frac{1 \\cdot 2}{2} = 1\n   \\]";
 
-    public function testTokenStreamWordBoundaryBehavior()
-    {
-        // Test word boundary detection with fragmented tokens
-        $fragmentedTokens = ["anc", "ient", " ", "book"];
+		$result = $this->streamer->convertLatexToUnicode( $testExpression );
 
-        iterator_to_array($this->streamer->outputMessage(''));
-        $this->streamer->clearChunks();
+		$expected = '(1(1 + 1))/(2) = (1 ⋅ 2)/(2) = 1';
 
-        $output = '';
-        foreach ($fragmentedTokens as $token) {
-            $result = iterator_to_array($this->streamer->outputMessage($token));
-            $output .= implode('', $result);
-        }
+		$this->assertEquals( $expected, $result );
+	}
 
-        $this->assertEquals('ancient book', $output);
-    }
+	public function testDebugInfo() {
+		// Clear any existing chunks
+		$this->streamer->clearChunks();
 
-    public function testTokenStreamNewlineHandling()
-    {
-        // Test newline handling in token stream
-        $newlineTokens = ["Line", " one", "\n", "Line", " two"];
+		// Process some messages
+		iterator_to_array( $this->streamer->outputMessage( 'test1' ) );
+		iterator_to_array( $this->streamer->outputMessage( 'test2' ) );
 
-        iterator_to_array($this->streamer->outputMessage(''));
-        $this->streamer->clearChunks();
+		$debugInfo = $this->streamer->getDebugInfo();
 
-        $output = '';
-        foreach ($newlineTokens as $token) {
-            $result = iterator_to_array($this->streamer->outputMessage($token));
-            $output .= implode('', $result);
-        }
+		$this->assertStringContainsString( 'Received 2 chunks:', $debugInfo );
+		$this->assertStringContainsString( '"test1"', $debugInfo );
+		$this->assertStringContainsString( '"test2"', $debugInfo );
 
-        $this->assertEquals("Line one\nLine two", $output);
-    }
+		// Test clear chunks
+		$this->streamer->clearChunks();
+		$debugInfoAfterClear = $this->streamer->getDebugInfo();
+		$this->assertStringContainsString( 'Received 0 chunks:', $debugInfoAfterClear );
+	}
 
-    public function testTokenStreamEmptyAndSpecialTokens()
-    {
-        // Test handling of empty strings and special characters
-        $specialTokens = ["", "text", "", " ", ",", "", "more"];
+	public function testTokenStreamProcessing() {
+		// Load token stream from fixture
+		$tokens = json_decode( file_get_contents( __DIR__ . '/fixtures/input/token-stream.json' ), true );
 
-        iterator_to_array($this->streamer->outputMessage(''));
-        $this->streamer->clearChunks();
+		// Clear any existing state
+		iterator_to_array( $this->streamer->outputMessage( '' ) );
+		$this->streamer->clearChunks();
 
-        $output = '';
-        foreach ($specialTokens as $token) {
-            $result = iterator_to_array($this->streamer->outputMessage($token));
-            $output .= implode('', $result);
-        }
+		// Process each token individually to simulate streaming
+		$output = '';
+		foreach ( $tokens as $token ) {
+			$result = iterator_to_array( $this->streamer->outputMessage( $token ) );
+			$output .= implode( '', $result );
+		}
 
-        $this->assertEquals('text ,more', $output);
-    }
+		// Verify the tokens were stored
+		$this->assertEquals( count( $tokens ), count( $this->streamer->getChunks() ) );
 
-    public function testTokenStreamStateConsistency()
-    {
-        // Test that internal state remains consistent across token boundaries
-        $stateTestTokens = ["**", "start", " bold", "**", " normal", " **", "end", " bold", "**"];
+		// Compare output against fixture
+		$this->assertStringEqualsFileOrWrite( __DIR__ . '/fixtures/expected/token-stream-output.txt', $output );
+	}
 
-        iterator_to_array($this->streamer->outputMessage(''));
-        $this->streamer->clearChunks();
+	public function testTokenStreamBoldFormatting() {
+		// Test that bold markers are handled correctly during token streaming
+		$boldTokens = array( '**', 'bold', ' text', '**', ' normal' );
 
-        $output = '';
-        foreach ($stateTestTokens as $token) {
-            $result = iterator_to_array($this->streamer->outputMessage($token));
-            $output .= implode('', $result);
-        }
+		iterator_to_array( $this->streamer->outputMessage( '' ) );
+		$this->streamer->clearChunks();
 
-        // Should have processed bold formatting correctly
-        $this->assertStringContainsString('start bold normal end bold', $output);
-        $this->assertStringNotContainsString('**', $output);
-    }
+		$output = '';
+		foreach ( $boldTokens as $token ) {
+			$result = iterator_to_array( $this->streamer->outputMessage( $token ) );
+			$output .= implode( '', $result );
+		}
 
-    public function testTokenStreamMathExpressions()
-    {
-        // Test math expressions split across tokens
-        $mathTokens = ["\\[", " \\frac{", "a}{", "b} ", "\\]"];
+		// Should contain the text without bold markers (since ANSI is false)
+		$this->assertStringContainsString( 'bold text normal', $output );
+		$this->assertStringNotContainsString( '**', $output );
+	}
 
-        iterator_to_array($this->streamer->outputMessage(''));
-        $this->streamer->clearChunks();
+	public function testTokenStreamWordBoundaryBehavior() {
+		// Test word boundary detection with fragmented tokens
+		$fragmentedTokens = array( 'anc', 'ient', ' ', 'book' );
 
-        $output = '';
-        foreach ($mathTokens as $token) {
-            $result = iterator_to_array($this->streamer->outputMessage($token));
-            $output .= implode('', $result);
-        }
+		iterator_to_array( $this->streamer->outputMessage( '' ) );
+		$this->streamer->clearChunks();
 
-        $this->assertEquals('(a)/(b)', $output);
-    }
+		$output = '';
+		foreach ( $fragmentedTokens as $token ) {
+			$result = iterator_to_array( $this->streamer->outputMessage( $token ) );
+			$output .= implode( '', $result );
+		}
 
-    public function testCompleteStoryTokenProcessing()
-    {
-        // Test processing the complete story with ANSI enabled to check formatting
-        $tokens = ["**","Title",":"," The"," Last"," Whisper","**\n\n","In"," a"," **","forgot","ten"," village","**,"," a"," **","young"," girl","**"," discovers"," an"," **","anc","ient"," book","**"," that"," holds"," the"," **","se","crets"," of"," lost"," voices","**","."," Each"," page"," unlock","s"," a"," **","wh","isper"," from"," the"," past","**","."," As"," she"," speaks"," the"," words",","," long","-b","ur","ied"," **","mem","ories","**"," awaken",","," revealing"," an"," **","ep","ic"," tale"," of"," love","**,"," **","betr","ay","al","**,"," and"," the"," **","power"," of"," memories","**"," to"," change"," the"," future","."];
+		$this->assertEquals( 'ancient book', $output );
+	}
 
-        $ansiStreamer = new MessageStreamer(true); // Enable ANSI for this test
-        iterator_to_array($ansiStreamer->outputMessage(''));
+	public function testTokenStreamNewlineHandling() {
+		// Test newline handling in token stream
+		$newlineTokens = array( 'Line', ' one', "\n", 'Line', ' two' );
 
-        $output = '';
-        foreach ($tokens as $token) {
-            $result = iterator_to_array($ansiStreamer->outputMessage($token));
-            $output .= implode('', $result);
-        }
+		iterator_to_array( $this->streamer->outputMessage( '' ) );
+		$this->streamer->clearChunks();
 
-        // Should contain ANSI formatting codes for bold text
-        $this->assertStringContainsString("\033[1m", $output); // Bold on
-        $this->assertStringContainsString("\033[m", $output);  // Reset
-        $this->assertStringContainsString('Title: The Last Whisper', $output);
-    }
+		$output = '';
+		foreach ( $newlineTokens as $token ) {
+			$result = iterator_to_array( $this->streamer->outputMessage( $token ) );
+			$output .= implode( '', $result );
+		}
+
+		$this->assertEquals( "Line one\nLine two", $output );
+	}
+
+	public function testTokenStreamEmptyAndSpecialTokens() {
+		// Test handling of empty strings and special characters
+		$specialTokens = array( '', 'text', '', ' ', ',', '', 'more' );
+
+		iterator_to_array( $this->streamer->outputMessage( '' ) );
+		$this->streamer->clearChunks();
+
+		$output = '';
+		foreach ( $specialTokens as $token ) {
+			$result = iterator_to_array( $this->streamer->outputMessage( $token ) );
+			$output .= implode( '', $result );
+		}
+
+		$this->assertEquals( 'text ,more', $output );
+	}
+
+	public function testTokenStreamStateConsistency() {
+		// Test that internal state remains consistent across token boundaries
+		$stateTestTokens = array( '**', 'start', ' bold', '**', ' normal', ' **', 'end', ' bold', '**' );
+
+		iterator_to_array( $this->streamer->outputMessage( '' ) );
+		$this->streamer->clearChunks();
+
+		$output = '';
+		foreach ( $stateTestTokens as $token ) {
+			$result = iterator_to_array( $this->streamer->outputMessage( $token ) );
+			$output .= implode( '', $result );
+		}
+
+		// Should have processed bold formatting correctly
+		$this->assertStringContainsString( 'start bold normal end bold', $output );
+		$this->assertStringNotContainsString( '**', $output );
+	}
+
+	public function testTokenStreamMathExpressions() {
+		// Test math expressions split across tokens
+		$mathTokens = array( '\\', '[', " \\frac{", 'a}{', 'b} ', '\\', ']' );
+
+		iterator_to_array( $this->streamer->outputMessage( '' ) );
+		$this->streamer->clearChunks();
+
+		$output = '';
+		foreach ( $mathTokens as $token ) {
+			$result = iterator_to_array( $this->streamer->outputMessage( $token ) );
+			$output .= implode( '', $result );
+		}
+
+		$this->assertEquals( '(a)/(b)', $output );
+	}
+
+	public static function fixtureProvider() {
+		$fixturesDir = __DIR__ . '/fixtures/input';
+		$inputFiles = glob( $fixturesDir . '/*.json' );
+
+		$data = array();
+		foreach ( $inputFiles as $inputFile ) {
+			$filename = basename( $inputFile, '.json' );
+			$data[ $filename ] = array(
+				$inputFile,
+				$filename,
+			);
+		}
+
+		return $data;
+	}
+
+	/**
+	 * @dataProvider fixtureProvider
+	 */
+	public function testInputFixtures( $inputFile, $filename ) {
+		$streamer = new MessageStreamer( false );
+		$expectedFile = __DIR__ . '/fixtures/expected/' . $filename . '-output.txt';
+
+		// Load token stream from fixture
+		$tokens = json_decode( file_get_contents( $inputFile ), true );
+		$this->assertIsArray( $tokens, "Failed to decode JSON from $inputFile" );
+
+		// Clear any existing state
+		iterator_to_array( $streamer->outputMessage( '' ) );
+		$streamer->clearChunks();
+
+		// Process each token individually to simulate streaming
+		$output = '';
+		foreach ( $tokens as $token ) {
+			$result = iterator_to_array( $streamer->outputMessage( $token ) );
+			$output .= implode( '', $result );
+		}
+
+		// Compare output against fixture
+		$this->assertStringEqualsFileOrWrite( $expectedFile, $output );
+	}
+
+	/**
+	 * @dataProvider fixtureProvider
+	 */
+	public function testInputFixturesWithAnsi( $inputFile, $filename ) {
+		$streamer = new MessageStreamer( true );
+		$expectedFile = __DIR__ . '/fixtures/expected-ansi/' . $filename . '-output.txt';
+
+		// Load token stream from fixture
+		$tokens = json_decode( file_get_contents( $inputFile ), true );
+		$this->assertIsArray( $tokens, "Failed to decode JSON from $inputFile" );
+
+		// Clear any existing state
+		iterator_to_array( $streamer->outputMessage( '' ) );
+		$streamer->clearChunks();
+
+		// Process each token individually to simulate streaming
+		$output = '';
+		foreach ( $tokens as $token ) {
+			$result = iterator_to_array( $streamer->outputMessage( $token ) );
+			$output .= implode( '', $result );
+		}
+
+		// Compare output against fixture
+		$this->assertStringEqualsFileOrWrite( $expectedFile, $output );
+	}
 }

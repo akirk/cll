@@ -1,0 +1,9 @@
+Absolutely! A common example is proving the formula for the sum of the first n natural numbers:
+
+S(n) = 1 + 2 + 3 + … + n = (n(n + 1))/(2)
+
+Let's go through this step by step.
+
+Step 1: Base Case
+
+We need to verify that this formula holds when n = 1. Can you calculate S(1) using the formula and the sum of the natural numbers? What do you find?

@@ -113,36 +113,36 @@ readline_read_history( $readline_history_file );
 curl_setopt( $ch, CURLOPT_URL, 'https://api.openai.com/v1/audio/speech' );
 
 curl_setopt(
-	$ch,
-	CURLOPT_HTTPHEADER,
-	array(
-		'Content-Type: application/json',
-		'Authorization: Bearer ' . $openai_key,
-		'Transfer-Encoding: chunked',
-	)
+    $ch,
+    CURLOPT_HTTPHEADER,
+    array(
+    'Content-Type: application/json',
+    'Authorization: Bearer ' . $openai_key,
+    'Transfer-Encoding: chunked',
+    )
 );
 
 $pipes = $audiofp = null;
 $fp = fopen( $full_history_file, 'a' );
 curl_setopt(
-	$ch,
-	CURLOPT_WRITEFUNCTION,
-	function ( $curl, $data ) use ( &$audiofp, &$pipes ) {
-		if ( 200 !== curl_getinfo( $curl, CURLINFO_HTTP_CODE ) ) {
-			var_dump( curl_getinfo( $curl, CURLINFO_HTTP_CODE ) );
-			$error = json_decode( trim( $data ), true );
-			echo 'Error: ', $error['error']['message'], PHP_EOL;
-			return strlen( $data );
-		}
-		if ( $pipes[0] ) {
-			fwrite( $pipes[0], $data );
-		}
-		if ( $audiofp ) {
-			fwrite( $audiofp, $data );
-		}
+    $ch,
+    CURLOPT_WRITEFUNCTION,
+    function ( $curl, $data ) use ( &$audiofp, &$pipes ) {
+     if ( 200 !== curl_getinfo( $curl, CURLINFO_HTTP_CODE ) ) {
+      var_dump( curl_getinfo( $curl, CURLINFO_HTTP_CODE ) );
+      $error = json_decode( trim( $data ), true );
+      echo 'Error: ', $error['error']['message'], PHP_EOL;
+      return strlen( $data );
+     }
+     if ( $pipes[0] ) {
+      fwrite( $pipes[0], $data );
+     }
+     if ( $audiofp ) {
+      fwrite( $audiofp, $data );
+     }
 
-		return strlen( $data );
-	}
+     return strlen( $data );
+    }
 );
 
 function correctSpelling( $text ) {
@@ -153,34 +153,34 @@ function correctSpelling( $text ) {
 
 	curl_setopt( $ch, CURLOPT_URL, 'https://api.openai.com/v1/chat/completions' );
 
-	curl_setopt(
-		$ch,
-		CURLOPT_HTTPHEADER,
-		array(
-			'Content-Type: application/json',
-			'Authorization: Bearer ' . $openai_key,
-		)
-	);
-	curl_setopt(
-		$ch,
-		CURLOPT_POSTFIELDS,
-		json_encode(
-			array(
-				'model'    => 'gpt-3.5-turbo',
-				'messages' =>
-				array(
-					array(
-						'role'    => 'system',
-						'content' => 'Return the input text but spell corrected',
-					),
-					array(
-						'role'    => 'user',
-						'content' => $text,
-					),
-				),
-			)
-		)
-	);
+curl_setopt(
+    $ch,
+    CURLOPT_HTTPHEADER,
+    array(
+    'Content-Type: application/json',
+    'Authorization: Bearer ' . $openai_key,
+    )
+);
+curl_setopt(
+    $ch,
+    CURLOPT_POSTFIELDS,
+    json_encode(
+        array(
+        'model'    => 'gpt-3.5-turbo',
+        'messages' =>
+        array(
+        array(
+        'role'    => 'system',
+        'content' => 'Return the input text but spell corrected',
+        ),
+        array(
+        'role'    => 'user',
+        'content' => $text,
+        ),
+        ),
+        )
+    )
+);
 
 	$output = curl_exec( $ch );
 	$json = json_decode( $output, true );
@@ -240,19 +240,19 @@ while ( true ) {
 		fwrite( $fp, $input . PHP_EOL );
 	}
 
-	curl_setopt(
-		$ch,
-		CURLOPT_POSTFIELDS,
-		json_encode(
-			array(
-				'model'  => 'tts-1',
-				'voice'  => $voice,
-				'input'  => $input,
-				'speed'  => $speed,
-				'stream' => true,
-			)
-		)
-	);
+curl_setopt(
+    $ch,
+    CURLOPT_POSTFIELDS,
+    json_encode(
+        array(
+        'model'  => 'tts-1',
+        'voice'  => $voice,
+        'input'  => $input,
+        'speed'  => $speed,
+        'stream' => true,
+        )
+    )
+);
 
 	$file = $chunk_file_template . sprintf( '%06d', ++$chunk_id ) . '.mp3';
 	$audiofp = fopen( $file, 'a' );
