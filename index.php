@@ -464,6 +464,13 @@ $text = preg_replace_callback(
 		.message.user { background: #e3f2fd; border-left: 4px solid #2196f3; }
 		.message.assistant { background: #f3e5f5; border-left: 4px solid #9c27b0; }
 		.message.system { background: #fff3e0; border-left: 4px solid #ff9800; }
+        .message.system .message-toggle { font-size: 0.8em; color: #666; }
+        .message.system .message-toggle::before { content: '(click to expand)'; }
+        .message.system.show .message-toggle::before { content: '(click to hide)'; }
+        .message.system .message-content { display: none; }
+        button.display-markdown { padding: 2px 6px; background: #666; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 0.7em; }
+        .message.system button.display-markdown { display: none; }
+        .message.system.show button.display-markdown { display: block; }
 		.message-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
 		.message-role { font-weight: bold; text-transform: capitalize; }
 		.message-timestamp { font-size: 0.8em; color: #666; }
@@ -712,29 +719,55 @@ $text = preg_replace_callback(
 						$isSystemMessage = ( $role === 'system' );
 						?>
 						<div class="message <?php echo htmlspecialchars( $displayRole ); ?>">
-							<div class="message-header" <?php echo $isSystemMessage ? 'style="cursor: pointer;" onclick="toggleSystemPrompt(this)"' : ''; ?>>
-								<div class="message-role">
+							<div class="message-header">
+								<div class="message-role" <?php echo $isSystemMessage ? 'style="cursor: pointer;" onclick="toggleSystemPrompt(this.parentNode)"' : ''; ?>>
 									<?php echo htmlspecialchars( $displayRole ); ?>
-									<?php echo $isSystemMessage ? ' <span style="font-size: 0.8em; color: #666;">(click to expand)</span>' : ''; ?>
+									<?php echo $isSystemMessage ? ' <span class="message-toggle"></span>' : ''; ?>
 								</div>
-								<div class="message-timestamp"><?php echo $timestamp ? date( 'Y-m-d H:i:s', $timestamp ) : ''; ?></div>
+								<div style="display: flex; align-items: center; gap: 10px;">
+									<button onclick="toggleRawSource(this)" class="display-markdown">View Markdown</button>
+									<div class="message-timestamp"><?php echo $timestamp ? date( 'Y-m-d H:i:s', $timestamp ) : ''; ?></div>
+								</div>
 							</div>
-							<div class="message-content" <?php echo $isSystemMessage ? 'style="display: none;"' : ''; ?>><?php echo renderMarkdown( $content ); ?></div>
+							<div class="message-content"><?php echo renderMarkdown( $content ); ?></div>
+							<div class="message-raw" style="display: none; margin-top: 10px;">
+								<div style="background: #f8f9fa; border: 1px solid #ddd; border-radius: 4px; padding: 10px;">
+									<div style="font-weight: bold; margin-bottom: 5px; font-size: 0.9em; color: #666;">Raw Message Content:</div>
+									<pre style="background: #fff; border: 1px solid #ddd; padding: 8px; border-radius: 3px; font-size: 0.8em; white-space: pre-wrap; word-wrap: break-word; margin: 0;"><?php echo htmlspecialchars( $content ); ?></pre>
+								</div>
+							</div>
 						</div>
 					<?php endforeach; ?>
 				</div>
 
 				<script>
 				function toggleSystemPrompt(header) {
+                    header.closest( 'div.message' ).classList.toggle('show');
 					const content = header.nextElementSibling;
 					const roleElement = header.querySelector('.message-role');
 					
-					if (content.style.display === 'none') {
-						content.style.display = 'block';
-						roleElement.innerHTML = roleElement.innerHTML.replace('(click to expand)', '(click to collapse)');
+					if (content.style.display === 'block') {
+                        content.style.display = 'none';
+                        roleElement.innerHTML = roleElement.innerHTML.replace('(click to collapse)', '(click to expand)');
 					} else {
-						content.style.display = 'none';
-						roleElement.innerHTML = roleElement.innerHTML.replace('(click to collapse)', '(click to expand)');
+                        content.style.display = 'block';
+                        roleElement.innerHTML = roleElement.innerHTML.replace('(click to expand)', '(click to collapse)');
+					}
+				}
+
+				function toggleRawSource(button) {
+					const message = button.closest('.message');
+					const rawDiv = message.querySelector('.message-raw');
+                    const contentDiv = message.querySelector('.message-content');
+
+					if (rawDiv.style.display === 'none') {
+						rawDiv.style.display = 'block';
+                        contentDiv.style.display = 'none';
+						button.textContent = 'Hide Markdown';
+					} else {
+						rawDiv.style.display = 'none';
+                        contentDiv.style.display = 'block';
+						button.textContent = 'View Markdown';
 					}
 				}
 				</script>
