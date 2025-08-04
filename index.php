@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/includes/LogStorage.php';
+require_once __DIR__ . '/includes/Parsedown.php';
 
 $dbPath = __DIR__ . '/chats.sqlite';
 if ( ! file_exists( $dbPath ) ) {
@@ -210,167 +211,33 @@ function renderConversationItem( $storage, $id ) {
 }
 
 function renderMarkdown( $text ) {
-	// Add HTML comment with original markdown for debugging
-	$originalText = $text;
-	$debugComment = "<!-- Original markdown:\n" . htmlspecialchars( $originalText ) . "\n-->\n";
-
-	// Extract and protect math expressions before HTML escaping
+	// Extract and protect math expressions before processing
 	$mathExpressions = array();
 	$mathCounter = 0;
 
 	// Find and replace math expressions with placeholders
-$text = preg_replace_callback(
-    '/\\\\\[([^\]]+)\\\\\]|\\\\\(([^)]+)\\\\\)|\$\$([^$]+)\$\$|\$([^$]+)\$/',
-    function ( $matches ) use ( &$mathExpressions, &$mathCounter ) {
-     $placeholder = 'MATHPLACEHOLDER' . $mathCounter++;
-     $mathExpressions[ $placeholder ] = $matches[0]; // Store the full match
-     return $placeholder;
-    },
-    $text
-);
-
-	// Now HTML escape the text with placeholders
-	$escapedText = htmlspecialchars( $text );
-	$lines = explode( "\n", $escapedText );
-
-	// We also need the original lines for code block processing
-	$originalLines = explode( "\n", $originalText );
-
-	$result = array();
-	$state = array(
-		'inList'         => false,
-		'inCodeBlock'    => false,
-		'codeBlockLang'  => '',
-		'codeBlockLines' => array(),
+	$text = preg_replace_callback(
+		'/\\\\\[([^\]]+)\\\\\]|\\\\\(([^)]+)\\\\\)|\$\$([^$]+)\$\$|\$([^$]+)\$/',
+		function ( $matches ) use ( &$mathExpressions, &$mathCounter ) {
+			$placeholder = 'MATHPLACEHOLDER' . $mathCounter++;
+			$mathExpressions[ $placeholder ] = $matches[0];
+			return $placeholder;
+		},
+		$text
 	);
 
-	for ( $i = 0; $i < count( $lines ); $i++ ) {
-		$line = $lines[ $i ];
-		$originalLine = $originalLines[ $i ] ?? '';
-		$trimmed = trim( $line );
-
-		// Check for code block delimiters (look for ``` at start of trimmed line)
-		// Use the original text to detect code blocks, but work with placeholder text for content
-		$originalLineForCodeCheck = $originalLines[ $i ] ?? '';
-		if ( preg_match( '/^```([a-zA-Z0-9_+-]*)\s*$/', trim( $originalLineForCodeCheck ), $matches ) ) {
-			if ( ! $state['inCodeBlock'] ) {
-				// Starting code block
-				if ( $state['inList'] ) {
-					$result[] = '</ul>';
-					$state['inList'] = false;
-				}
-				$state['inCodeBlock'] = true;
-				$state['codeBlockLang'] = $matches[1] ?? '';
-				$state['codeBlockLines'] = array();
-			} else {
-				// Ending code block
-				$lang = $state['codeBlockLang'] ? ' class="language-' . $state['codeBlockLang'] . '"' : '';
-				$codeContent = implode( "\n", $state['codeBlockLines'] );
-				$result[] = '<pre><code' . $lang . '>' . htmlspecialchars( $codeContent ) . '</code></pre>';
-				$state['inCodeBlock'] = false;
-				$state['codeBlockLang'] = '';
-				$state['codeBlockLines'] = array();
-			}
-			continue;
-		}
-
-		// If inside code block, collect original lines (not HTML escaped)
-		if ( $state['inCodeBlock'] ) {
-			$state['codeBlockLines'][] = $originalLineForCodeCheck;
-			continue;
-		}
-
-		// Process other markdown outside code blocks
-		$trimmedLeft = ltrim( $line );
-
-		// List items
-		if ( preg_match( '/^[-*] (.+)$/', $trimmedLeft, $matches ) ) {
-			if ( ! $state['inList'] ) {
-				$result[] = '<ul>';
-				$state['inList'] = true;
-			}
-			$result[] = '<li>' . processInlineFormatting( $matches[1] ) . '</li>';
-			continue;
-		}
-
-		// Close list if not a list item
-		if ( $state['inList'] ) {
-			$result[] = '</ul>';
-			$state['inList'] = false;
-		}
-
-		// Headers
-		if ( preg_match( '/^(#{1,3}) (.+)$/', $trimmedLeft, $matches ) ) {
-			$level = strlen( $matches[1] );
-			$result[] = '<h' . $level . '>' . processInlineFormatting( $matches[2] ) . '</h' . $level . '>';
-			continue;
-		}
-
-		// Regular paragraph
-		if ( $trimmed !== '' ) {
-			$result[] = '<p>' . processInlineFormatting( $line ) . '</p>';
-		}
-	}
-
-	// Clean up any open states
-	if ( $state['inList'] ) {
-		$result[] = '</ul>';
-	}
-	if ( $state['inCodeBlock'] ) {
-		// Unclosed code block - treat as text
-		$result[] = '<p>```' . $state['codeBlockLang'] . '</p>';
-		foreach ( $state['codeBlockLines'] as $codeLine ) {
-			$result[] = '<p>' . processInlineFormatting( htmlspecialchars( $codeLine ) ) . '</p>';
-		}
-	}
-
-	$finalResult = implode( "\n", $result );
-
-	// Debug: Add info about math expressions found
-	$debugInfo = '<!-- Math expressions found: ' . count( $mathExpressions ) . " -->\n";
-	if ( ! empty( $mathExpressions ) ) {
-		$debugInfo .= '<!-- Placeholders: ' . implode( ', ', array_keys( $mathExpressions ) ) . " -->\n";
-	}
+	// Use Parsedown to render markdown
+	$parsedown = new Parsedown();
+	$html = $parsedown->text( $text );
 
 	// Restore math expressions
 	foreach ( $mathExpressions as $placeholder => $mathExpression ) {
-		$finalResult = str_replace( $placeholder, $mathExpression, $finalResult );
+		$html = str_replace( $placeholder, $mathExpression, $html );
 	}
 
-	return $debugComment . $debugInfo . $finalResult;
+	return $html;
 }
 
-function processInlineFormatting( $text ) {
-	// Extract and protect math expressions first
-	$mathExpressions = array();
-	$mathCounter = 0;
-
-	// Find and replace math expressions with placeholders
-$text = preg_replace_callback(
-    '/MATHPLACEHOLDER\d+/',
-    function ( $matches ) use ( &$mathExpressions, &$mathCounter ) {
-     // If it's already a placeholder, keep it as is
-     return $matches[0];
-    },
-    $text
-);
-
-	// Process inline code first to protect it
-	$text = preg_replace( '/`([^`]+)`/', '<code>$1</code>', $text );
-
-	// Bold formatting
-	$text = preg_replace( '/\*\*([^*]+)\*\*/', '<strong>$1</strong>', $text );
-	$text = preg_replace( '/__([^_]+)__/', '<strong>$1</strong>', $text );
-
-	// Italic formatting (avoid conflicts with bold)
-	$text = preg_replace( '/(?<!\*)\*([^*]+)\*(?!\*)/', '<em>$1</em>', $text );
-	$text = preg_replace( '/(?<!_)_([^_]+)_(?!_)/', '<em>$1</em>', $text );
-
-	// Links
-	$text = preg_replace( '/\[([^\]]+)\]\(([^)]+)\)/', '<a href="$2" target="_blank">$1</a>', $text );
-
-	return $text;
-}
 
 ?>
 <!DOCTYPE html>
