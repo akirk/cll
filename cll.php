@@ -931,13 +931,13 @@ while ( true ) {
 		);
 	}
 
-curl_setopt(
-    $ch,
-    CURLOPT_POSTFIELDS,
-    json_encode(
-        $wrapper
-    )
-);
+	curl_setopt(
+	    $ch,
+	    CURLOPT_POSTFIELDS,
+	    json_encode(
+	        $wrapper
+	    )
+	);
 
 	if ( $ansi || isset( $options['v'] ) ) {
 		echo PHP_EOL;
