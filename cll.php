@@ -24,19 +24,6 @@ function dont_auto_complete( $input, $index ) {
 	return array(); }
 
 
-$messageStreamer = new MessageStreamer( $ansi );
-
-function convert_latex_to_unicode( $text ) {
-	global $messageStreamer;
-	return $messageStreamer->convertLatexToUnicode( $text );
-}
-function output_message( $message ) {
-	global $messageStreamer;
-	foreach ( $messageStreamer->outputMessage( $message ) as $output ) {
-		echo $output;
-	}
-}
-
 readline_completion_function( 'dont_auto_complete' );
 
 $readline_history_file = __DIR__ . '/.history';
@@ -61,6 +48,8 @@ if ( isset( $options['n'] ) ) {
 		fprintf( STDERR, 'Warning: No logging storage available. Conversations will not be saved.' . PHP_EOL );
 	}
 }
+
+$messageStreamer = new MessageStreamer( $ansi, $logStorage );
 
 $system = false;
 
@@ -699,57 +688,7 @@ if ( 'OpenAI' === $model_provider ) {
 
 $chunk_overflow = '';
 curl_setopt( $ch, CURLOPT_HTTPHEADER, $headers );
-curl_setopt(
-    $ch,
-    CURLOPT_WRITEFUNCTION,
-    function ( $curl, $data ) use ( &$message, &$chunk_overflow, &$usage, $model_provider ) {
-     if ( 200 !== curl_getinfo( $curl, CURLINFO_HTTP_CODE ) ) {
-      $error = json_decode( trim( $chunk_overflow . $data ), true );
-      if ( $error ) {
-       echo 'Error: ', $error['error']['message'], PHP_EOL;
-      } else {
-       $chunk_overflow .= $data;
-      }
-      return strlen( $data );
-     }
-     $items = explode( 'data: ', $data );
-     foreach ( $items as $item ) {
-      if ( ! $item ) {
-       continue;
-      }
-      $json = json_decode( trim( $chunk_overflow . $item ), true );
-      if ( $json ) {
-       $chunk_overflow = '';
-      } else {
-       $json = json_decode( trim( $item ), true );
-      }
-
-      if ( isset( $json['message']['usage'] ) ) {
-       $usage = array_merge( $usage, $json['message']['usage'] );
-      } elseif ( isset( $json['usage'] ) ) {
-       $usage = array_merge( $usage, $json['usage'] );
-      }
-
-      if ( $model_provider === 'Anthropic' ) {
-       if ( isset( $json['delta']['text'] ) ) {
-        output_message( $json['delta']['text'] );
-
-        $message .= $json['delta']['text'];
-       } else {
-        $chunk_overflow = $item;
-       }
-      } elseif ( isset( $json['choices'][0]['delta']['content'] ) ) {
-        output_message( $json['choices'][0]['delta']['content'] );
-
-        $message .= $json['choices'][0]['delta']['content'];
-      } else {
-       $chunk_overflow = $item;
-      }
-     }
-
-     return strlen( $data );
-    }
-);
+// The curl write function will be set after MessageStreamer is created
 
 // Start chatting.
 $multiline = false;
@@ -806,6 +745,8 @@ while ( true ) {
 			$system = false;
 		}
 		$conversation_initialized = true;
+		// Set current conversation in logStorage and create MessageStreamer
+		$logStorage->setCurrentConversation( $conversation_id );
 	}
 
 	if ( isset( $options['i'] ) ) {
@@ -926,9 +867,11 @@ while ( true ) {
 		unset( $options['i'] );
 	}
 
-	if ( ltrim( $input ) === $input ) {
+	if ( $stdin || ltrim( $input ) === $input ) {
 		// Persist history unless prepended by whitespace.
-		readline_write_history( $readline_history_file );
+		if ( ! $stdin ) {
+			readline_write_history( $readline_history_file );
+		}
 		if ( $system ) {
 			$logStorage->writeSystemPrompt( $conversation_id, $system, $system_prompt_name );
 			$system = false;
@@ -1001,6 +944,8 @@ curl_setopt(
 	}
 	$message = '';
 
+	curl_setopt( $ch, CURLOPT_WRITEFUNCTION, $messageStreamer->createCurlWriteHandler( $message, $chunk_overflow, $usage, $model_provider ) );
+
 	$output = curl_exec( $ch );
 	if ( curl_error( $ch ) ) {
 		echo 'CURL Error: ', curl_error( $ch ), PHP_EOL;
@@ -1040,11 +985,11 @@ curl_setopt(
 		}
 	}
 	if ( $stdin || ltrim( $input ) === $input ) {
-		// Persist history unless prepended by whitespace or coming from stdin.
+		// Persist history unless prepended by whitespace.
 		$logStorage->writeAssistantMessage( $conversation_id, $message );
 	}
 
-	if ( isset( $options['v'] ) ) {
+	if ( isset( $options['v'] ) && $messageStreamer ) {
 		echo $messageStreamer->getDebugInfo();
 		$messageStreamer->clearChunks();
 		if ( ! empty( $usage ) ) {
