@@ -5,6 +5,7 @@ class MessageStreamer {
 	private bool $ansi;
 	private string $old_message = '';
 	private array $chunks = array();
+	private $logStorage = null;
 	private array $state = array(
 		'maybe_bold'            => false,
 		'maybe_underline'       => false,
@@ -23,8 +24,9 @@ class MessageStreamer {
 		'pending_backslash'     => false, // true when we see a backslash at end of token
 	);
 
-	public function __construct( bool $ansi = false ) {
+	public function __construct( bool $ansi = false, $logStorage = null ) {
 		$this->ansi = $ansi;
+		$this->logStorage = $logStorage;
 	}
 
 	private function convertLatexInnerContent( string $latex ): string {
@@ -164,6 +166,62 @@ class MessageStreamer {
 
 	public function clearChunks(): void {
 		$this->chunks = array();
+	}
+
+	public function setLogStorage( $logStorage ): void {
+		$this->logStorage = $logStorage;
+	}
+
+	public function createCurlWriteHandler( &$message, &$chunk_overflow, &$usage, $model_provider ) {
+		return function ( $curl, $data ) use ( &$message, &$chunk_overflow, &$usage, $model_provider ) {
+			if ( 200 !== curl_getinfo( $curl, CURLINFO_HTTP_CODE ) ) {
+				$error = json_decode( trim( $chunk_overflow . $data ), true );
+				if ( $error ) {
+					echo 'Error: ', $error['error']['message'], PHP_EOL;
+				} else {
+					$chunk_overflow .= $data;
+				}
+				return strlen( $data );
+			}
+			$items = explode( 'data: ', $data );
+			foreach ( $items as $item ) {
+				if ( ! $item ) {
+					continue;
+				}
+				$json = json_decode( trim( $chunk_overflow . $item ), true );
+				if ( $json ) {
+					$chunk_overflow = '';
+				} else {
+					$json = json_decode( trim( $item ), true );
+				}
+
+				if ( isset( $json['message']['usage'] ) ) {
+					$usage = array_merge( $usage, $json['message']['usage'] );
+				} elseif ( isset( $json['usage'] ) ) {
+					$usage = array_merge( $usage, $json['usage'] );
+				}
+
+				if ( $model_provider === 'Anthropic' ) {
+					if ( isset( $json['delta']['text'] ) ) {
+						foreach ( $this->outputMessage( $json['delta']['text'] ) as $output ) {
+							echo $output;
+						}
+						$message .= $json['delta']['text'];
+					} else {
+						$chunk_overflow = $item;
+					}
+				} elseif ( isset( $json['choices'][0]['delta']['content'] ) ) {
+					foreach ( $this->outputMessage( $json['choices'][0]['delta']['content'] ) as $output ) {
+						echo $output;
+					}
+					$message .= $json['choices'][0]['delta']['content'];
+				} else {
+					$chunk_overflow = $item;
+				}
+			}
+
+			return strlen( $data );
+		};
 	}
 
 	public function convertLatexToUnicode( string $text ): string {
@@ -386,6 +444,11 @@ class MessageStreamer {
 						// Convert the inner content
 						$converted = $this->convertLatexInnerContent( $innerContent );
 						yield $converted;
+
+						// Add math tag to conversation if we have logStorage
+						if ( $this->logStorage ) {
+							$this->logStorage->addTag( 'math' );
+						}
 
 						// Reset math state
 						$this->state['math_type'] = false;

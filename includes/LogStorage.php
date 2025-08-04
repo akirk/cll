@@ -1,6 +1,16 @@
 <?php
 
 abstract class LogStorage {
+	protected $currentConversationId = null;
+
+	public function setCurrentConversation( $conversationId ) {
+		$this->currentConversationId = $conversationId;
+	}
+
+	public function getCurrentConversation() {
+		return $this->currentConversationId;
+	}
+
 	abstract public function initializeConversation( $conversationId, $model, $createdAt = null );
 	abstract public function writeSystemPrompt( $conversationId, $systemPrompt, $promptName = null );
 	abstract public function writeUserMessage( $conversationId, $message, $createdAt = null );
@@ -581,6 +591,13 @@ $stmt = $this->db->prepare(
 			return $this->setConversationTags( $conversationId, $currentTags );
 		}
 
+		return false;
+	}
+
+	public function addTag( $newTag ) {
+		if ( $this->currentConversationId ) {
+			return $this->addTagToConversation( $this->currentConversationId, $newTag );
+		}
 		return false;
 	}
 

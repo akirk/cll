@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__ . '/includes/LogStorage.php';
 require_once __DIR__ . '/includes/Parsedown.php';
+require_once __DIR__ . '/includes/ParsedownMath.php';
 
 $dbPath = __DIR__ . '/chats.sqlite';
 if ( ! file_exists( $dbPath ) ) {
@@ -8,6 +9,7 @@ if ( ! file_exists( $dbPath ) ) {
 }
 
 $storage = new SQLiteLogStorage( $dbPath );
+$parsedown = new ParsedownMath();
 
 $action = $_GET['action'] ?? 'list';
 $conversationId = $_GET['id'] ?? null;
@@ -209,35 +211,6 @@ function renderConversationItem( $storage, $id ) {
 
 	return $html;
 }
-
-function renderMarkdown( $text ) {
-	// Extract and protect math expressions before processing
-	$mathExpressions = array();
-	$mathCounter = 0;
-
-	// Find and replace math expressions with placeholders
-	$text = preg_replace_callback(
-		'/\\\\\[([^\]]+)\\\\\]|\\\\\(([^)]+)\\\\\)|\$\$([^$]+)\$\$|\$([^$]+)\$/',
-		function ( $matches ) use ( &$mathExpressions, &$mathCounter ) {
-			$placeholder = 'MATHPLACEHOLDER' . $mathCounter++;
-			$mathExpressions[ $placeholder ] = $matches[0];
-			return $placeholder;
-		},
-		$text
-	);
-
-	// Use Parsedown to render markdown
-	$parsedown = new Parsedown();
-	$html = $parsedown->text( $text );
-
-	// Restore math expressions
-	foreach ( $mathExpressions as $placeholder => $mathExpression ) {
-		$html = str_replace( $placeholder, $mathExpression, $html );
-	}
-
-	return $html;
-}
-
 
 ?>
 <!DOCTYPE html>
@@ -596,7 +569,7 @@ function renderMarkdown( $text ) {
 									<div class="message-timestamp"><?php echo $timestamp ? date( 'Y-m-d H:i:s', $timestamp ) : ''; ?></div>
 								</div>
 							</div>
-							<div class="message-content"><?php echo renderMarkdown( $content ); ?></div>
+							<div class="message-content"><?php echo $parsedown->text( $content ); ?></div>
 							<div class="message-raw" style="display: none; margin-top: 10px;">
 								<div style="background: #f8f9fa; border: 1px solid #ddd; border-radius: 4px; padding: 10px;">
 									<div style="font-weight: bold; margin-bottom: 5px; font-size: 0.9em; color: #666;">Raw Message Content:</div>
