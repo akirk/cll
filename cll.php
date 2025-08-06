@@ -601,7 +601,9 @@ if ( isset( $options['r'] ) ) {
 				echo '> ';
 			}
 
-			output_message( $content . PHP_EOL );
+			foreach ( $messageStreamer->outputMessage( $content . PHP_EOL ) as $output ) {
+				echo $output;
+			}
 		}
 
 		if ( isset( $options['d'] ) ) {
@@ -609,7 +611,7 @@ if ( isset( $options['r'] ) ) {
 			// Answer the question right away.
 		}
 	}
-} elseif ( ! empty( $options['s'] ) || isset( $options['f'] ) ) {
+} elseif ( ! empty( $options['s'] ) || isset( $options['f'] ) || substr( $model, 0, 7 ) === 'gpt-oss' ) {
 	$system = '';
 	$system_prompt_name = null; // Track the name for tagging
 	if ( ! empty( $options['s'] ) ) {
@@ -640,17 +642,20 @@ if ( isset( $options['r'] ) ) {
 	if ( isset( $options['f'] ) ) {
 		$system = 'When recommending file content it must be prepended with the proposed filename in the form: "File: filename.ext" ' . $system;
 	}
+	if ( substr( $model, 0, 7 ) === 'gpt-oss' ) {
+		$system .= ' Regarding your responses, please favor lists over tables.';
+	}
 	if ( $system ) {
 		if ( $model_provider === 'Anthropic' ) {
 			$wrapper['system'] = $system;
 		} else {
-array_unshift(
+			array_unshift(
 				$messages,
 				array(
 					'role'    => 'system',
 					'content' => $system,
 				)
-);
+			);
 		}
 	}
 	if ( trim( $initial_input ) ) {

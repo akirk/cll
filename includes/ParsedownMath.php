@@ -155,6 +155,10 @@ class ParsedownMath extends ParsedownMathParentAlias
     // #[Override]
     protected function inlineEscapeSequence($Excerpt)
     {
+	if (!isset($Excerpt['text'][1])) {
+		return null;
+	}
+
         $Element = [
             'element' => [
                 'rawHtml' => $Excerpt['text'][1],
