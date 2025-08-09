@@ -22,6 +22,7 @@ class MessageStreamer {
 		'math_type'             => false, // false, 'inline_paren', 'inline_dollar', 'display_bracket', 'display_dollar'
 		'math_start_pos'        => 0,
 		'pending_backslash'     => false, // true when we see a backslash at end of token
+		'pending_dollar'        => false, // true when we see a dollar at end of token
 	);
 
 	public function __construct( bool $ansi = false, $logStorage = null ) {
@@ -372,6 +373,23 @@ class MessageStreamer {
 						}
 					}
 
+					// Handle pending dollar from previous token
+					if ( $this->state['pending_dollar'] ) {
+						if ( ctype_digit( $message[ $i ] ) ) {
+							// This is likely currency like $100, not math
+							yield '$';
+							$this->state['pending_dollar'] = false;
+							// Continue processing current character
+						} else {
+							// This might be math, start inline dollar mode
+							$this->state['math_type'] = 'inline_dollar';
+							$this->state['math_buffer'] = '$';
+							$this->state['math_start_pos'] = $i - 1; // Account for dollar from previous token
+							$this->state['pending_dollar'] = false;
+							// Continue processing current character
+						}
+					}
+
 					// Look for \[ (display math) - check substring to handle split tokens
 					if ( $i < $length - 1 && substr( $message, $i, 2 ) === '\\[' ) {
 						$this->state['math_type'] = 'display_bracket';
@@ -403,8 +421,21 @@ class MessageStreamer {
 						$i += 2;
 						continue;
 					}
-					// Look for $ (inline math) - but not if already $$
+					// Look for $ (inline math) - but not if already $$ or preceded by alphanumeric characters (like "$100")
 					if ( $message[ $i ] === '$' && ! ( isset( $message[ $i - 1 ] ) && $message[ $i - 1 ] === '$' ) ) {
+						// Check if this looks like a currency symbol rather than math
+						$nextChar = isset( $message[ $i + 1 ] ) ? $message[ $i + 1 ] : '';
+						if ( ctype_digit( $nextChar ) ) {
+							// This is likely currency like $100, not math
+							yield $message[ $i ];
+							++$i;
+							continue;
+						} elseif ( $i === $length - 1 ) {
+							// We're at the end of the token with a dollar, mark it as pending
+							$this->state['pending_dollar'] = true;
+							++$i;
+							continue;
+						}
 						$this->state['math_type'] = 'inline_dollar';
 						$this->state['math_buffer'] = '$';
 						$this->state['math_start_pos'] = $i;
