@@ -2,7 +2,7 @@
 require_once __DIR__ . '/includes/LogStorage.php';
 require_once __DIR__ . '/includes/MessageStreamer.php';
 
-$version = '1.1.2';
+$version = '2.0.1';
 $openai_key = getenv( 'OPENAI_API_KEY', true );
 $anthropic_key = getenv( 'ANTHROPIC_API_KEY', true );
 $ansi = function_exists( 'posix_isatty' ) && posix_isatty( STDOUT );
