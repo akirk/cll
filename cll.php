@@ -7,7 +7,15 @@ $openai_key = getenv( 'OPENAI_API_KEY', true );
 $anthropic_key = getenv( 'ANTHROPIC_API_KEY', true );
 $ansi = function_exists( 'posix_isatty' ) && posix_isatty( STDOUT );
 
-$options = getopt( 'ds:li:p:vhfm:r:w::n', array( 'help', 'version', 'webui' ), $initial_input );
+$options = getopt( 'ds:li:p:vhfm::r:w::n', array( 'help', 'version', 'webui' ), $initial_input );
+
+$new_argv = array( $_SERVER['argv'][0] );
+foreach ( $_SERVER['argv'] as $i => $arg ) {
+	if ( preg_match( '/^-[mw]$/', $arg ) && isset( $_SERVER['argv'][$i + 1] ) ) {
+		$options['m'] = $_SERVER['argv'][++$i];
+		$initial_input += 1;
+	}
+}
 
 if ( ! isset( $options['m'] ) ) {
 	putenv( 'RES_OPTIONS=retrans:1 retry:1 timeout:1 attempts:1' );
@@ -65,39 +73,42 @@ if ( file_exists( $supported_models_file ) ) {
 	$options['m'] = '';
 }
 
-if ( $online && isset( $options['m'] ) && $options['m'] == '' ) {
+if ( $online && isset( $options['m'] ) && empty( $options['m'] ) ) {
 	// Update models.
+	$supported_models = array();
 	if ( ! empty( $openai_key ) ) {
+		fprintf( STDERR, 'Updating supported models... ' );
+
 		curl_setopt( $ch, CURLOPT_URL, 'https://api.openai.com/v1/models' );
-curl_setopt(
-    $ch,
-    CURLOPT_HTTPHEADER,
-    array(
+		curl_setopt(
+			$ch,
+			CURLOPT_HTTPHEADER,
+			array(
 				'Content-Type: application/json',
 				'Authorization: Bearer ' . $openai_key,
-    )
-);
+			)
+		);
 
 		$response = curl_exec( $ch );
 		$data = json_decode( $response, true );
 
 		foreach ( $data['data'] as $model ) {
-			if ( 0 === strpos( $model['id'], 'gpt' ) ) {
+			if ( preg_match( '/^(gpt-\d|o\d-)/', $model['id'] ) && false === strpos( $model['id'], 'preview' ) ) {
 				$supported_models[ $model['id'] ] = 'OpenAI';
 			}
 		}
 	}
 	if ( ! empty( $anthropic_key ) ) {
 		curl_setopt( $ch, CURLOPT_URL, 'https://api.anthropic.com/v1/models' );
-curl_setopt(
-    $ch,
-    CURLOPT_HTTPHEADER,
-    array(
+		curl_setopt(
+			$ch,
+			CURLOPT_HTTPHEADER,
+			array(
 				'x-api-key: ' . $anthropic_key,
 				'anthropic-version: 2023-06-01',
 				'Content-Type: application/json',
-    )
-);
+			)
+		);
 		$response = curl_exec( $ch );
 		$data = json_decode( $response, true );
 
@@ -107,6 +118,8 @@ curl_setopt(
 			}
 		}
 	}
+
+	fprintf( STDERR, 'done (%d models found).' . PHP_EOL, count( $supported_models ) );
 
 	file_put_contents( $supported_models_file, json_encode( $supported_models, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ) );
 }
@@ -178,7 +191,7 @@ if ( empty( $supported_models ) ) {
 	exit( 1 );
 }
 
-$model_weight = array_flip( array_reverse( array( 'gpt-4o-mini', 'gemma3', 'llama3', 'llama2' ) ) );
+$model_weight = array_flip( array_reverse( array( 'gpt-4o-mini', 'claude-3-5-haiku', 'gemma3', 'llama3', 'llama2', '' ) ) );
 uksort(
     $supported_models,
     function ( $a, $b ) use ( $model_weight ) {
@@ -202,10 +215,67 @@ uksort(
      return 0;
     }
 );
-
 $model = key( $supported_models );
 
-$supported_models_list = implode( ', ', array_keys( $supported_models ) );
+$supported_models_by_provider = array();
+foreach ( $supported_models as $m => $provider ) {
+	$model_group = $m;
+	if ( 'OpenAI' === $provider && preg_match( '/^o\d/', $m ) ) {
+		$model_group = strtok( $m, '-' );
+	} elseif ( 'OpenAI' === $provider ) {
+		$model_group = strtok( $m, '-' ) . '-' . strtok( '-' );
+	} elseif ( 'Anthropic' === $provider ) {
+		$model_group = strtok( $m, '-' ) . '-' . strtok( '-' ) . '-' . strtok( '-' );
+	} elseif ( 'Ollama (local)' === $provider ) {
+		$model_group = strtok( $m, ':' );
+	}
+
+	$supported_models_by_provider[ $provider ][ $model_group ][] = $m;
+}
+ksort( $supported_models_by_provider );
+$supported_models_list = '';
+foreach ( $supported_models_by_provider as $provider => $model_groups ) {
+	$provider_count = $provider . ' (' . count( array_merge( $model_groups ) ) . ')';
+	$supported_models_list .= PHP_EOL . PHP_EOL . $provider_count;
+	$supported_models_list .= PHP_EOL . str_repeat( '-', strlen( $provider_count ) );
+	ksort( $model_groups );
+	foreach ( $model_groups as $model_group => $models ) {
+		usort( $models, function ( $a, $b ) {
+			if ( preg_match( '/\d{4}/', $a ) && ! preg_match( '/\d{4}/', $b ) ) {
+				return 1; // a is newer than b
+			} else if ( preg_match( '/\d{4}/', $b ) && ! preg_match( '/\d{4}/', $a ) ) {
+				return -1; // b is newer than a
+			}
+			return strnatcmp( $a, $b );
+		} );
+		if ( $ansi ) {
+			$supported_models_list .= PHP_EOL . "\033[1m" . $model_group . "\033[m";
+			$t = ' ';
+		} else {
+			$supported_models_list .= PHP_EOL . $model_group;
+			$t = ': ';
+		}
+		foreach ( $models as $model ) {
+			$supported_models_list .= $t;
+			$t = ' ';
+			if ( $ansi ) {
+				if ( 'OpenAI' === $provider && preg_match( '/\d{4}/', $model ) ) {
+					// light gray
+					$supported_models_list .= "\033[90m";
+					$supported_models_list .= $model;
+					$supported_models_list .= "\033[0m";
+				} else {
+					$supported_models_list .= $model;
+				}
+			} else {
+				$supported_models_list .= $model;
+			}
+		}
+	}
+}
+
+
+
 
 if ( isset( $options['version'] ) ) {
 	echo basename( $_SERVER['argv'][0] ), ' version ', $version, PHP_EOL;
@@ -215,6 +285,7 @@ if ( isset( $options['version'] ) ) {
 if ( isset( $options['h'] ) || isset( $options['help'] ) ) {
 	$offline = ! $online ? "(we're offline)" : '';
 	$self = basename( $_SERVER['argv'][0] );
+	$padded_supported_models_list = str_replace( PHP_EOL, PHP_EOL . '    | ', $supported_models_list );
 	echo <<<USAGE
 Usage: $self [-l] [-f] [-r [number|searchterm]] [-m model] [-s [system_prompt|id]] [-i input_file_s] [-p picture_file] [-w port|--webui] [conversation_input]
 
@@ -274,7 +345,7 @@ Example usage:
 
   $self -m gpt-3.5-turbo-16k
     Use a ChatGPT model with 16k tokens instead of 4k.
-    Supported modes: $supported_models_list $offline
+    Supported models: $padded_supported_models_list $offline
 
 
 USAGE;
