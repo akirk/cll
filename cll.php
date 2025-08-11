@@ -2,7 +2,7 @@
 require_once __DIR__ . '/includes/LogStorage.php';
 require_once __DIR__ . '/includes/MessageStreamer.php';
 
-$version = '2.0.1';
+$version = '2.0.2';
 $openai_key = getenv( 'OPENAI_API_KEY', true );
 $anthropic_key = getenv( 'ANTHROPIC_API_KEY', true );
 $ansi = function_exists( 'posix_isatty' ) && posix_isatty( STDOUT );
@@ -193,27 +193,39 @@ if ( empty( $supported_models ) ) {
 
 $model_weight = array_flip( array_reverse( array( 'gpt-4o-mini', 'claude-3-5-haiku', 'gemma3', 'llama3', 'llama2', '' ) ) );
 uksort(
-    $supported_models,
-    function ( $a, $b ) use ( $model_weight ) {
-     $a_weight = $b_weight = -1;
-     foreach ( $model_weight as $model => $weight ) {
-      if ( 0 === strpos( $a, $model ) ) {
-       $a_weight = $weight;
-      } elseif ( 0 === strpos( $b, $model ) ) {
-       $b_weight = $weight;
-      }
-     }
+	$supported_models,
+	function ( $a, $b ) use ( $model_weight ) {
+		$a_weight = $b_weight = -1;
+		foreach ( $model_weight as $model => $weight ) {
+			if ( 0 === strpos( $a, $model ) ) {
+				$a_weight = $weight;
+			}
 
-     if ( $a_weight > $b_weight ) {
-      return -1;
-     }
+			if ( 0 === strpos( $b, $model ) ) {
+				$b_weight = $weight;
+			}
+		}
 
-     if ( $a_weight < $b_weight ) {
-      return 1;
-     }
+		if ( $a_weight > $b_weight ) {
+			return -1;
+		}
 
-     return 0;
-    }
+		if ( $a_weight < $b_weight ) {
+			return 1;
+		}
+
+
+		if ( strlen( $a ) < strlen( $b ) ) {
+			return -1;
+		}
+
+		if ( strlen( $a ) > strlen( $b ) ) {
+			return 1;
+		}
+
+
+		return 0;
+	}
 );
 $model = key( $supported_models );
 
@@ -255,26 +267,24 @@ foreach ( $supported_models_by_provider as $provider => $model_groups ) {
 			$supported_models_list .= PHP_EOL . $model_group;
 			$t = ': ';
 		}
-		foreach ( $models as $model ) {
+		foreach ( $models as $_model ) {
 			$supported_models_list .= $t;
 			$t = ' ';
 			if ( $ansi ) {
-				if ( 'OpenAI' === $provider && preg_match( '/\d{4}/', $model ) ) {
+				if ( 'OpenAI' === $provider && preg_match( '/\d{4}/', $_model ) ) {
 					// light gray
 					$supported_models_list .= "\033[90m";
-					$supported_models_list .= $model;
+					$supported_models_list .= $_model;
 					$supported_models_list .= "\033[0m";
 				} else {
-					$supported_models_list .= $model;
+					$supported_models_list .= $_model;
 				}
 			} else {
-				$supported_models_list .= $model;
+				$supported_models_list .= $_model;
 			}
 		}
 	}
 }
-
-
 
 
 if ( isset( $options['version'] ) ) {
