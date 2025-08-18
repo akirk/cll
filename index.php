@@ -64,7 +64,7 @@ if ( $_POST['tag_action'] ?? null ) {
 				break;
 
 			case 'set':
-				$newTags = array_filter( array_map( 'trim', explode( ',', $_POST['tags'] ?? '' ) ) );
+				$newTags = array_filter( array_map( 'trim', explode( ' ', $_POST['tags'] ?? '' ) ) );
 				$storage->setConversationTags( $targetConversationId, $newTags );
 				break;
 		}
@@ -302,6 +302,7 @@ function renderConversationItem( $storage, $id ) {
 		.conversation-link { display: inline-block; padding: 6px 12px; background: #007cba; color: white; text-decoration: none; border-radius: 4px; }
 		.message { margin-bottom: 20px; padding: 15px; border-radius: 6px; }
 		.message.user { background: #e3f2fd; border-left: 4px solid #2196f3; }
+		.message.user .message-content pre { max-height: 10em; overflow: auto; }
 		.message.assistant { background: #f3e5f5; border-left: 4px solid #9c27b0; }
 		.message.system { background: #fff3e0; border-left: 4px solid #ff9800; }
         .message.system .message-toggle { font-size: 0.8em; color: #666; }
@@ -464,46 +465,15 @@ function renderConversationItem( $storage, $id ) {
 
 				<div class="tag-editor" id="tag-editor">
 					<h4>Tags</h4>
-					<div class="tag-list">
-						<?php if ( empty( $conversationTags ) ) : ?>
-							<em>No tags assigned</em>
-						<?php else : ?>
-							<?php foreach ( $conversationTags as $tag ) : ?>
-								<span class="editable-tag">
-									<?php echo htmlspecialchars( $tag ); ?>
-									<span class="remove-tag-btn" onclick="removeTag('<?php echo htmlspecialchars( $tag ); ?>')">×</span>
-								</span>
-							<?php endforeach; ?>
-						<?php endif; ?>
-					</div>
-					
-					<form class="tag-form" method="post" style="display: inline-block;">
-						<input type="hidden" name="tag_action" value="add">
-						<input type="hidden" name="conversation_id" value="<?php echo htmlspecialchars( $conversationId ); ?>">
-						<input type="text" name="new_tag" placeholder="Add new tag" required>
-						<button type="submit">Add Tag</button>
-					</form>
-					
-					<button onclick="toggleBulkEdit()" style="margin-left: 10px; padding: 6px 10px; background: #666; color: white; border: none; border-radius: 3px; cursor: pointer;">
-						Edit All Tags
-					</button>
-					
-					<form id="bulk-edit-form" class="tag-form" method="post" style="display: none; margin-top: 10px;">
+					<form class="tag-form" method="post">
 						<input type="hidden" name="tag_action" value="set">
 						<input type="hidden" name="conversation_id" value="<?php echo htmlspecialchars( $conversationId ); ?>">
-						<input type="text" name="tags" placeholder="Enter tags separated by commas" 
-								value="<?php echo htmlspecialchars( implode( ', ', $conversationTags ) ); ?>" style="width: 300px;">
-						<button type="submit">Save Tags</button>
-						<button type="button" onclick="toggleBulkEdit()" style="background: #666; margin-left: 5px;">Cancel</button>
+						<input type="text" name="tags" placeholder="Enter tags separated by spaces" 
+								value="<?php echo htmlspecialchars( implode( ' ', $conversationTags ) ); ?>" style="width: 400px; padding: 8px;">
+						<button type="submit" style="padding: 8px 15px; margin-left: 10px;">Save Tags</button>
 					</form>
 				</div>
 				
-				<!-- Hidden form for removing tags -->
-				<form id="remove-tag-form" method="post" style="display: none;">
-					<input type="hidden" name="tag_action" value="remove">
-					<input type="hidden" name="conversation_id" value="<?php echo htmlspecialchars( $conversationId ); ?>">
-					<input type="hidden" name="tag_to_remove" id="tag_to_remove_input">
-				</form>
 				
 				<!-- Hidden form for deleting conversation -->
 				<form id="delete-form" method="post" style="display: none;">
@@ -512,25 +482,9 @@ function renderConversationItem( $storage, $id ) {
 				</form>
 
 				<script>
-				function removeTag(tag) {
-					if (confirm('Remove tag "' + tag + '"?')) {
-						document.getElementById('tag_to_remove_input').value = tag;
-						document.getElementById('remove-tag-form').submit();
-					}
-				}
-				
 				function toggleTagEditor() {
 					var editor = document.getElementById('tag-editor');
 					editor.classList.toggle('visible');
-				}
-
-				function toggleBulkEdit() {
-					var form = document.getElementById('bulk-edit-form');
-					if (form.style.display === 'none') {
-						form.style.display = 'block';
-					} else {
-						form.style.display = 'none';
-					}
 				}
 
 				function confirmDelete() {
