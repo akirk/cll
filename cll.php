@@ -724,7 +724,7 @@ if ( isset( $options['r'] ) ) {
 		$system = 'When recommending file content it must be prepended with the proposed filename in the form: "File: filename.ext" ' . $system;
 	}
 	if ( substr( $model, 0, 7 ) === 'gpt-oss' ) {
-		$system .= ' Regarding your responses, please favor lists over tables.';
+		$system .= ' When responding, ALWAYS prefer lists to tables.';
 	}
 	if ( $system ) {
 		if ( $model_provider === 'Anthropic' ) {
@@ -759,6 +759,71 @@ $headers = array(
 );
 
 $usage = array();
+
+// Cost tracking variables
+$conversation_start_time = microtime( true );
+$total_api_duration = 0;
+$total_input_tokens = 0;
+$total_output_tokens = 0;
+$total_cache_read_tokens = 0;
+$total_cache_write_tokens = 0;
+$api_call_count = 0;
+
+function calculate_cost( $model, $input_tokens, $output_tokens, $cache_read_tokens = 0, $cache_write_tokens = 0 ) {
+	static $pricing_data = null;
+
+	// Load pricing data once
+	if ( $pricing_data === null ) {
+		$pricing_file = __DIR__ . '/pricing.json';
+		if ( file_exists( $pricing_file ) ) {
+			$pricing_json = file_get_contents( $pricing_file );
+			$pricing_data = json_decode( $pricing_json, true );
+
+			if ( json_last_error() !== JSON_ERROR_NONE ) {
+				error_log( 'Invalid pricing.json format: ' . json_last_error_msg() );
+				$pricing_data = false;
+			}
+		} else {
+			error_log( 'pricing.json file not found: ' . $pricing_file );
+			$pricing_data = false;
+		}
+	}
+
+	// Return 0 if pricing data couldn't be loaded
+	if ( ! $pricing_data || ! isset( $pricing_data['models'] ) ) {
+		return 0;
+	}
+
+	// Find the best matching pricing
+	$model_pricing = null;
+	foreach ( $pricing_data['models'] as $price_model => $prices ) {
+		if ( strpos( $model, $price_model ) !== false ) {
+			$model_pricing = $prices;
+			break;
+		}
+	}
+
+	// Return 0 for unknown models (no fallback)
+	if ( ! $model_pricing ) {
+		return 0;
+	}
+
+	$per_tokens = $pricing_data['per_tokens'] ?? 1000000;
+
+	$cost = 0;
+	$cost += ( $input_tokens / $per_tokens ) * $model_pricing['input'];
+	$cost += ( $output_tokens / $per_tokens ) * $model_pricing['output'];
+
+	if ( isset( $model_pricing['cache_read'] ) && $cache_read_tokens > 0 ) {
+		$cost += ( $cache_read_tokens / $per_tokens ) * $model_pricing['cache_read'];
+	}
+
+	if ( isset( $model_pricing['cache_write'] ) && $cache_write_tokens > 0 ) {
+		$cost += ( $cache_write_tokens / $per_tokens ) * $model_pricing['cache_write'];
+	}
+
+	return $cost;
+}
 
 if ( 'OpenAI' === $model_provider ) {
 	curl_setopt( $ch, CURLOPT_URL, 'https://api.openai.com/v1/chat/completions' );
@@ -1032,7 +1097,13 @@ while ( true ) {
 
 	curl_setopt( $ch, CURLOPT_WRITEFUNCTION, $messageStreamer->createCurlWriteHandler( $message, $chunk_overflow, $usage, $model_provider ) );
 
+	$api_start_time = microtime( true );
 	$output = curl_exec( $ch );
+	$api_end_time = microtime( true );
+	$api_call_duration = $api_end_time - $api_start_time;
+	$total_api_duration += $api_call_duration;
+	$api_call_count++;
+
 	if ( curl_error( $ch ) ) {
 		echo 'CURL Error: ', curl_error( $ch ), PHP_EOL;
 		exit( 1 );
@@ -1075,6 +1146,48 @@ while ( true ) {
 		$logStorage->writeAssistantMessage( $conversation_id, $message );
 	}
 
+	// Accumulate token usage and update cost after each API response
+	if ( ! empty( $usage ) ) {
+		$current_input_tokens = 0;
+		$current_output_tokens = 0;
+		$current_cache_read_tokens = 0;
+		$current_cache_write_tokens = 0;
+
+		if ( isset( $usage['prompt_tokens'] ) ) {
+			$current_input_tokens = $usage['prompt_tokens'];
+			$total_input_tokens += $current_input_tokens;
+		} elseif ( isset( $usage['input_tokens'] ) ) {
+			$current_input_tokens = $usage['input_tokens'];
+			$total_input_tokens += $current_input_tokens;
+		}
+
+		if ( isset( $usage['completion_tokens'] ) ) {
+			$current_output_tokens = $usage['completion_tokens'];
+			$total_output_tokens += $current_output_tokens;
+		} elseif ( isset( $usage['output_tokens'] ) ) {
+			$current_output_tokens = $usage['output_tokens'];
+			$total_output_tokens += $current_output_tokens;
+		}
+
+		if ( isset( $usage['cache_read_input_tokens'] ) ) {
+			$current_cache_read_tokens = $usage['cache_read_input_tokens'];
+			$total_cache_read_tokens += $current_cache_read_tokens;
+		}
+
+		if ( isset( $usage['cache_creation_input_tokens'] ) ) {
+			$current_cache_write_tokens = $usage['cache_creation_input_tokens'];
+			$total_cache_write_tokens += $current_cache_write_tokens;
+		}
+
+		// Calculate and store cost for this API call
+		if ( $conversation_id && ( $current_input_tokens > 0 || $current_output_tokens > 0 ) ) {
+			$current_cost = calculate_cost( $model, $current_input_tokens, $current_output_tokens, $current_cache_read_tokens, $current_cache_write_tokens );
+			if ( $current_cost > 0 ) {
+				$logStorage->storeCostData( $conversation_id, $current_cost, $current_input_tokens, $current_output_tokens );
+			}
+		}
+	}
+
 	if ( isset( $options['v'] ) && $messageStreamer ) {
 		echo $messageStreamer->getDebugInfo();
 		$messageStreamer->clearChunks();
@@ -1096,4 +1209,58 @@ while ( true ) {
 		break;
 	}
 }
+
+// Cost is now stored after each API response, not at the end
+
+// Only show cost summary in verbose mode
+if ( isset( $options['v'] ) ) {
+	$conversation_end_time = microtime( true );
+	$total_wall_duration = $conversation_end_time - $conversation_start_time;
+	$cost = calculate_cost( $model, $total_input_tokens, $total_output_tokens, $total_cache_read_tokens, $total_cache_write_tokens );
+
+	echo PHP_EOL;
+
+	if ( $cost > 0 ) {
+		echo sprintf( 'Total cost:            $%.4f', $cost ), PHP_EOL;
+	}
+
+	echo sprintf( 'Total duration (API):  %.1fs', $total_api_duration ), PHP_EOL;
+	echo sprintf( 'Total duration (wall): %s', format_duration( $total_wall_duration ) ), PHP_EOL;
+
+	if ( $total_input_tokens > 0 || $total_output_tokens > 0 || $total_cache_read_tokens > 0 || $total_cache_write_tokens > 0 ) {
+		echo 'Usage by model:', PHP_EOL;
+		$formatted_input = format_token_count( $total_input_tokens );
+		$formatted_output = format_token_count( $total_output_tokens );
+		$formatted_cache_read = format_token_count( $total_cache_read_tokens );
+		$formatted_cache_write = format_token_count( $total_cache_write_tokens );
+
+		echo sprintf( '       %s: %s input, %s output', $model, $formatted_input, $formatted_output );
+
+		if ( $total_cache_read_tokens > 0 || $total_cache_write_tokens > 0 ) {
+			echo sprintf( ', %s cache read, %s cache write', $formatted_cache_read, $formatted_cache_write );
+		}
+		echo PHP_EOL;
+	}
+}
+
 $logStorage->close();
+
+function format_duration( $seconds ) {
+	if ( $seconds < 60 ) {
+		return sprintf( '%.1fs', $seconds );
+	} else {
+		$minutes = floor( $seconds / 60 );
+		$remaining_seconds = $seconds - ( $minutes * 60 );
+		return sprintf( '%dm %.1fs', $minutes, $remaining_seconds );
+	}
+}
+
+function format_token_count( $tokens ) {
+	if ( $tokens >= 1000000 ) {
+		return sprintf( '%.1fM', $tokens / 1000000 );
+	} elseif ( $tokens >= 1000 ) {
+		return sprintf( '%.1fk', $tokens / 1000 );
+	} else {
+		return (string) $tokens;
+	}
+}
