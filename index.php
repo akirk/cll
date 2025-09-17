@@ -192,6 +192,9 @@ function renderConversationItem( $storage, $id ) {
 	$html .= '<span><strong>Created:</strong> ' . date( 'M j, Y g:i A', $metadata['timestamp'] ) . '</span>';
 	$html .= '<span><strong>Answers:</strong> ' . $metadata['answers'] . '</span>';
 	$html .= '<span><strong>Words:</strong> ~' . number_format( $metadata['word_count'] ) . '</span>';
+	if ( $metadata['cost'] > 0 ) {
+		$html .= '<span><strong>Cost:</strong> $' . number_format( $metadata['cost'], 4 ) . '</span>';
+	}
 	$html .= '</div>';
 	$html .= '<p>' . htmlspecialchars( $preview ) . '</p>';
 
@@ -325,6 +328,43 @@ function renderConversationItem( $storage, $id ) {
 		.message-content h1, .message-content h2, .message-content h3 { margin: 15px 0 10px 0; }
 		.message-content ul { margin: 10px 0; padding-left: 20px; }
 		.message-content li { margin: 5px 0; }
+
+		/* Enhanced table styling for assistant messages */
+		.message.assistant .message-content table {
+			border-collapse: collapse;
+			width: 100%;
+			margin: 15px 0;
+			background: white;
+			border-radius: 6px;
+			overflow: hidden;
+			box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+		}
+		.message.assistant .message-content th,
+		.message.assistant .message-content td {
+			border: 1px solid #e0e0e0;
+			padding: 12px 15px;
+			text-align: left;
+			vertical-align: top;
+		}
+		.message.assistant .message-content th {
+			background: linear-gradient(135deg, #9c27b0, #ba68c8);
+			color: white;
+			font-weight: 600;
+			text-transform: uppercase;
+			font-size: 0.85em;
+			letter-spacing: 0.5px;
+		}
+		.message.assistant .message-content tr:nth-child(even) {
+			background: #fafafa;
+		}
+		.message.assistant .message-content tr:hover {
+			background: #f0f0f0;
+			transition: background-color 0.2s ease;
+		}
+		.message.assistant .message-content td code {
+			background: #f8f9fa;
+			border: 1px solid #e9ecef;
+		}
 		.back-link { display: inline-block; margin-bottom: 20px; padding: 8px 15px; background: #666; color: white; text-decoration: none; border-radius: 4px; }
 		.nav { margin: 0; }
 		.nav a { margin-left: 20px; color: #007cba; text-decoration: none; font-weight: 500; }
@@ -444,6 +484,12 @@ function renderConversationItem( $storage, $id ) {
 					<span><strong>Messages:</strong> <?php echo count( $messages ); ?></span>
 					<span><strong>Answers:</strong> <?php echo $metadata['answers']; ?></span>
 					<span><strong>Words:</strong> ~<?php echo number_format( $metadata['word_count'] ); ?></span>
+					<?php if ( $metadata['cost'] > 0 ) : ?>
+						<span><strong>Cost:</strong> $<?php echo number_format( $metadata['cost'], 4 ); ?></span>
+					<?php endif; ?>
+					<?php if ( $metadata['input_tokens'] > 0 || $metadata['output_tokens'] > 0 ) : ?>
+						<span><strong>Tokens:</strong> <?php echo number_format( $metadata['input_tokens'] ); ?> in, <?php echo number_format( $metadata['output_tokens'] ); ?> out</span>
+					<?php endif; ?>
 				</div>
 				
 				<button class="toggle-tags-btn" onclick="toggleTagEditor()">Manage Tags</button>
@@ -756,7 +802,10 @@ function renderConversationItem( $storage, $id ) {
 			$db = new PDO( 'sqlite:' . $dbPath );
 			$totalConversations = $db->query( 'SELECT COUNT(*) FROM conversations' )->fetchColumn();
 			$totalMessages = $db->query( 'SELECT COUNT(*) FROM messages' )->fetchColumn();
-			$modelStats = $db->query( 'SELECT model, COUNT(*) as count FROM conversations GROUP BY model ORDER BY count DESC' )->fetchAll( PDO::FETCH_ASSOC );
+			$totalCost = $db->query( 'SELECT SUM(cost) FROM conversations' )->fetchColumn();
+			$totalInputTokens = $db->query( 'SELECT SUM(input_tokens) FROM conversations' )->fetchColumn();
+			$totalOutputTokens = $db->query( 'SELECT SUM(output_tokens) FROM conversations' )->fetchColumn();
+			$modelStats = $db->query( 'SELECT model, COUNT(*) as count, SUM(cost) as total_cost FROM conversations GROUP BY model ORDER BY count DESC' )->fetchAll( PDO::FETCH_ASSOC );
 
 			// Tag statistics
 			$tagStats = array();
@@ -832,6 +881,23 @@ $monthStats = $db->query(
 						<div style="font-size: 2em; font-weight: bold; color: #007cba;"><?php echo $totalConversations > 0 ? round( $totalMessages / $totalConversations, 1 ) : 0; ?></div>
 						<div style="color: #666;">Avg Messages/Conv</div>
 					</div>
+					<?php if ( $totalCost > 0 ) : ?>
+					<div style="background: #f8f9fa; padding: 15px; border-radius: 6px; text-align: center;">
+						<div style="font-size: 2em; font-weight: bold; color: #28a745;">$<?php echo number_format( $totalCost, 2 ); ?></div>
+						<div style="color: #666;">Total Cost</div>
+					</div>
+					<?php endif; ?>
+					<?php if ( $totalInputTokens > 0 || $totalOutputTokens > 0 ) : ?>
+					<div style="background: #f8f9fa; padding: 15px; border-radius: 6px; text-align: center;">
+						<div style="font-size: 1.5em; font-weight: bold; color: #007cba;">
+							<?php echo number_format( $totalInputTokens + $totalOutputTokens ); ?>
+						</div>
+						<div style="color: #666; font-size: 0.9em;">
+							<?php echo number_format( $totalInputTokens ); ?> in + <?php echo number_format( $totalOutputTokens ); ?> out
+						</div>
+						<div style="color: #666;">Total Tokens</div>
+					</div>
+					<?php endif; ?>
 				</div>
 			</div>
 			
@@ -1046,11 +1112,11 @@ $monthStats = $db->query(
 				delimiters: [
 					{left: '\\[', right: '\\]', display: true},
 					{left: '\\(', right: '\\)', display: false},
-					{left: '$', right: '$', display: false},
 					{left: '$$', right: '$$', display: true}
 				],
 				throwOnError: false,
-				strict: false
+				strict: false,
+				ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code']
 			});
 		}
 	});
