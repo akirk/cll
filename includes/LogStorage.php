@@ -19,6 +19,7 @@ abstract class LogStorage {
 	abstract public function findConversations( $limit = 10, $search = null, $tag = null, $offset = 0 );
 	abstract public function getConversationMetadata( $conversationId );
 	abstract public function copyConversation( $sourceId, $targetId );
+	abstract public function storeCostData( $conversationId, $cost, $inputTokens, $outputTokens );
 }
 
 class NoLogStorage extends LogStorage {
@@ -65,6 +66,10 @@ class NoLogStorage extends LogStorage {
 	public function getSystemPromptByName( $name ) {
 		return null; // No-op implementation
 	}
+
+	public function storeCostData( $conversationId, $cost, $inputTokens, $outputTokens ) {
+		// No-op implementation
+	}
 }
 
 
@@ -89,7 +94,10 @@ $this->db->exec(
                 model TEXT NOT NULL,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL,
-                tags TEXT DEFAULT ''
+                tags TEXT DEFAULT '',
+                cost REAL DEFAULT 0,
+                input_tokens INTEGER DEFAULT 0,
+                output_tokens INTEGER DEFAULT 0
             )
         "
 );
@@ -125,6 +133,23 @@ $this->db->exec(
 		$this->db->exec( 'CREATE INDEX IF NOT EXISTS idx_conversations_created ON conversations(created_at DESC)' );
 		$this->db->exec( 'CREATE INDEX IF NOT EXISTS idx_conversations_tags ON conversations(tags)' );
 		$this->db->exec( 'CREATE INDEX IF NOT EXISTS idx_system_prompts_name ON system_prompts(name)' );
+
+		// Add cost tracking columns if they don't exist (migration)
+		$columns = $this->db->query( "PRAGMA table_info(conversations)" )->fetchAll( PDO::FETCH_ASSOC );
+		$hasColumns = array();
+		foreach ( $columns as $column ) {
+			$hasColumns[] = $column['name'];
+		}
+
+		if ( ! in_array( 'cost', $hasColumns ) ) {
+			$this->db->exec( 'ALTER TABLE conversations ADD COLUMN cost REAL DEFAULT 0' );
+		}
+		if ( ! in_array( 'input_tokens', $hasColumns ) ) {
+			$this->db->exec( 'ALTER TABLE conversations ADD COLUMN input_tokens INTEGER DEFAULT 0' );
+		}
+		if ( ! in_array( 'output_tokens', $hasColumns ) ) {
+			$this->db->exec( 'ALTER TABLE conversations ADD COLUMN output_tokens INTEGER DEFAULT 0' );
+		}
 
 		// Insert default empty system prompt if none exists
 		$existingPrompts = $this->db->query( 'SELECT COUNT(*) FROM system_prompts' )->fetchColumn();
@@ -263,12 +288,15 @@ $answerStmt = $this->db->prepare(
 		$answers = $answerStmt->fetch( PDO::FETCH_ASSOC )['answers'];
 
 		return array(
-			'model'      => $row['model'],
-			'timestamp'  => $row['created_at'],
-			'word_count' => intval( $row['word_count'] / 5 ), // Rough word count estimation
-			'answers'    => $answers,
-			'file_path'  => null, // Not applicable for SQLite
-			'tags'       => $row['tags'] ?? '',
+			'model'        => $row['model'],
+			'timestamp'    => $row['created_at'],
+			'word_count'   => intval( $row['word_count'] / 5 ), // Rough word count estimation
+			'answers'      => $answers,
+			'file_path'    => null, // Not applicable for SQLite
+			'tags'         => $row['tags'] ?? '',
+			'cost'         => floatval( $row['cost'] ?? 0 ),
+			'input_tokens' => intval( $row['input_tokens'] ?? 0 ),
+			'output_tokens' => intval( $row['output_tokens'] ?? 0 ),
 		);
 	}
 
@@ -740,6 +768,13 @@ $stmt = $this->db->prepare(
 			$this->db->rollback();
 			return false;
 		}
+	}
+
+	public function storeCostData( $conversationId, $cost, $inputTokens, $outputTokens ) {
+		$stmt = $this->db->prepare(
+			'UPDATE conversations SET cost = cost + ?, input_tokens = input_tokens + ?, output_tokens = output_tokens + ? WHERE id = ?'
+		);
+		return $stmt->execute( array( $cost, $inputTokens, $outputTokens, $conversationId ) );
 	}
 
 	public function __destruct() {
