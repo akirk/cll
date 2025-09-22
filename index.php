@@ -130,6 +130,76 @@ if ( $_SERVER['REQUEST_METHOD'] === 'POST' && isset( $_GET['api'] ) && $_GET['ap
 	exit;
 }
 
+// Handle fork conversation request
+if ( $_SERVER['REQUEST_METHOD'] === 'POST' && isset( $_GET['api'] ) && $_GET['api'] === 'fork_conversation' ) {
+	header( 'Content-Type: application/json' );
+
+	$input = json_decode( file_get_contents( 'php://input' ), true );
+
+	if ( ! $input || ! isset( $input['conversationId'] ) || ! isset( $input['messageIndex'] ) ) {
+		http_response_code( 400 );
+		echo json_encode( array( 'error' => 'Missing required parameters' ) );
+		exit;
+	}
+
+	$sourceConversationId = $input['conversationId'];
+	$messageIndex = intval( $input['messageIndex'] );
+
+	try {
+		// Load the source conversation
+		$sourceConversation = $storage->loadConversation( $sourceConversationId );
+		if ( ! $sourceConversation ) {
+			http_response_code( 404 );
+			echo json_encode( array( 'error' => 'Source conversation not found' ) );
+			exit;
+		}
+
+		// Create new conversation with same model
+		$metadata = $storage->getConversationMetadata( $sourceConversationId );
+		$model = $metadata['model'] ?? 'gpt-4';
+		$newConversationId = $storage->initializeConversation( null, $model ); // initializeConversation returns the actual ID
+
+		// Copy messages up to and including the specified index
+		$messageCount = 0;
+		$copiedCount = 0;
+
+		foreach ( $sourceConversation as $message ) {
+			if ( $messageCount > $messageIndex ) {
+				break;
+			}
+
+			switch ( $message['role'] ) {
+				case 'system':
+					$storage->writeSystemPrompt( $newConversationId, $message['content'] );
+					$copiedCount++;
+					break;
+				case 'user':
+					$storage->writeUserMessage( $newConversationId, $message['content'], $message['timestamp'] ?? null );
+					$copiedCount++;
+					break;
+				case 'assistant':
+					$storage->writeAssistantMessage( $newConversationId, $message['content'], $message['timestamp'] ?? null );
+					$copiedCount++;
+					break;
+			}
+			$messageCount++;
+		}
+
+		echo json_encode( array(
+			'success' => true,
+			'newConversationId' => $newConversationId,
+			'messagesCopied' => $copiedCount,
+			'totalMessages' => count( $sourceConversation ),
+			'requestedIndex' => $messageIndex
+		) );
+	} catch ( Exception $e ) {
+		http_response_code( 500 );
+		echo json_encode( array( 'error' => 'Failed to fork conversation: ' . $e->getMessage() ) );
+	}
+
+	exit;
+}
+
 // Handle tag management actions
 if ( $_POST['tag_action'] ?? null ) {
 	$tagAction = $_POST['tag_action'];
@@ -402,6 +472,91 @@ function renderConversationItem( $storage, $id ) {
         .message.system.show .message-toggle::before { content: '(click to hide)'; }
         .message.system .message-content { display: none; }
         button.display-markdown { padding: 2px 6px; background: #666; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 0.7em; }
+        .branch-zone {
+            position: relative;
+            cursor: pointer;
+            margin: 10px 0;
+            padding: 0;
+            height: 20px;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .branch-zone::before {
+            content: "💡 Continue in a different way";
+            background: white;
+            color: #666;
+            border: 1px solid #ddd;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.75em;
+            white-space: nowrap;
+            opacity: 0.3;
+            transition: all 0.2s ease;
+        }
+        .branch-zone:hover {
+            height: 30px;
+            margin: 15px 0;
+        }
+        .branch-zone:hover::before {
+            opacity: 1;
+            padding: 6px 12px;
+            font-size: 0.8em;
+            background: #4CAF50;
+            color: white;
+            border-color: #4CAF50;
+        }
+        .branch-interface {
+            background: #f8f9fa;
+            border: 2px solid #4CAF50;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 10px 0;
+            display: none;
+        }
+        .branch-interface.active {
+            display: block;
+        }
+        .branch-textarea {
+            width: 100%;
+            min-height: 80px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 10px;
+            font-family: inherit;
+            font-size: 14px;
+            resize: vertical;
+        }
+        .branch-buttons {
+            margin-top: 10px;
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+        }
+        .branch-submit {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        .branch-submit:hover {
+            background: #45a049;
+        }
+        .branch-cancel {
+            background: #6c757d;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .branch-cancel:hover {
+            background: #5a6268;
+        }
         .message.system button.display-markdown { display: none; }
         .message.system.show button.display-markdown { display: block; }
 		.message-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
@@ -631,7 +786,8 @@ function renderConversationItem( $storage, $id ) {
 				
 				<div class="messages">
 					<?php
-					foreach ( $messages as $message ) :
+					$previousRole = null;
+					foreach ( $messages as $i => $message ) :
 						if ( is_array( $message ) ) {
 							$content = $message['content'];
 							$timestamp = $message['timestamp'];
@@ -641,6 +797,21 @@ function renderConversationItem( $storage, $id ) {
 							$content = $message;
 							$timestamp = null;
 							$role = 'unknown';
+						}
+
+						// Add branch zone if previous message was assistant and current is user
+						if ( $previousRole === 'assistant' && $role === 'user' ) {
+							?>
+							<div class="branch-zone" onclick="showBranchInterface(<?php echo $i; ?>)" data-message-index="<?php echo $i; ?>"></div>
+							<div id="branch-interface-<?php echo $i; ?>" class="branch-interface">
+								<div style="font-weight: bold; margin-bottom: 10px; color: #4CAF50;">💡 Continue the conversation in a different way</div>
+								<textarea class="branch-textarea" placeholder="Ask a different question or explore another direction..."></textarea>
+								<div class="branch-buttons">
+									<button class="branch-cancel" onclick="hideBranchInterface(<?php echo $i; ?>)">Cancel</button>
+									<button class="branch-submit" onclick="submitBranch(<?php echo $i; ?>)">Branch & Ask</button>
+								</div>
+							</div>
+							<?php
 						}
 
 						// Regular message - no special handling needed
@@ -666,6 +837,7 @@ function renderConversationItem( $storage, $id ) {
 								</div>
 							</div>
 						</div>
+						<?php $previousRole = $role; ?>
 					<?php endforeach; ?>
 				</div>
 
@@ -836,36 +1008,47 @@ function renderConversationItem( $storage, $id ) {
 
 
 
-				async function sendMessage() {
+				async function sendMessage(autoSubmitMode = false) {
 					const userInput = document.getElementById('user-input');
 					const sendButton = document.getElementById('send-message');
 					const statusDiv = document.getElementById('api-status');
 
-					if (!userInput.value.trim() || !currentModel) return;
+					let userMessage;
 
-					const userMessage = userInput.value.trim();
-					userInput.value = '';
-					sendButton.disabled = true;
+					if (autoSubmitMode) {
+						// In auto-submit mode, we skip input validation and storage since message is already stored
+						if (!currentModel) return;
+						// User message is already in conversationMessages from autoSubmitLastUserMessage
+						userMessage = conversationMessages[conversationMessages.length - 1].content;
+					} else {
+						// Normal mode - get message from input field
+						if (!userInput.value.trim() || !currentModel) return;
 
-					// Add user message to conversation
-					appendMessage('user', userMessage);
+						userMessage = userInput.value.trim();
+						userInput.value = '';
 
-					// Store user message in database
-					try {
-						await fetch('?api=store_user_message', {
-							method: 'POST',
-							headers: { 'Content-Type': 'application/json' },
-							body: JSON.stringify({
-								conversationId: currentConversationId,
-								message: userMessage
-							})
-						});
-					} catch (error) {
-						console.error('Failed to store user message:', error);
+						// Add user message to conversation
+						appendMessage('user', userMessage);
+
+						// Store user message in database
+						try {
+							await fetch('?api=store_user_message', {
+								method: 'POST',
+								headers: { 'Content-Type': 'application/json' },
+								body: JSON.stringify({
+									conversationId: currentConversationId,
+									message: userMessage
+								})
+							});
+						} catch (error) {
+							console.error('Failed to store user message:', error);
+						}
+
+						// Add user message to conversation context
+						conversationMessages.push({ role: 'user', content: userMessage });
 					}
 
-					// Add user message to conversation context
-					conversationMessages.push({ role: 'user', content: userMessage });
+					sendButton.disabled = true;
 
 					// Prepare API request
 					const provider = chatConfig.supported_models[currentModel];
@@ -1115,6 +1298,109 @@ function renderConversationItem( $storage, $id ) {
 					return messageDiv;
 				}
 
+				function showBranchInterface(messageIndex) {
+					// Hide any other open branch interfaces
+					document.querySelectorAll('.branch-interface.active').forEach(el => {
+						el.classList.remove('active');
+					});
+
+					// Show the clicked branch interface
+					const interface = document.getElementById(`branch-interface-${messageIndex}`);
+					if (interface) {
+						interface.classList.add('active');
+						// Focus on the textarea
+						const textarea = interface.querySelector('.branch-textarea');
+						if (textarea) {
+							textarea.focus();
+
+							// Add Enter key listener for this textarea
+							textarea.addEventListener('keydown', function(e) {
+								if (e.key === 'Enter' && !e.shiftKey) {
+									e.preventDefault();
+									submitBranch(messageIndex);
+								}
+							});
+						}
+					}
+				}
+
+				function hideBranchInterface(messageIndex) {
+					const interface = document.getElementById(`branch-interface-${messageIndex}`);
+					if (interface) {
+						interface.classList.remove('active');
+						// Clear the textarea
+						const textarea = interface.querySelector('.branch-textarea');
+						if (textarea) {
+							textarea.value = '';
+						}
+					}
+				}
+
+				async function submitBranch(messageIndex) {
+					if (!currentConversationId) {
+						alert('No conversation to branch from');
+						return;
+					}
+
+					const interface = document.getElementById(`branch-interface-${messageIndex}`);
+					const textarea = interface.querySelector('.branch-textarea');
+					const newQuestion = textarea.value.trim();
+
+					if (!newQuestion) {
+						alert('Please enter a question or message to continue the conversation');
+						textarea.focus();
+						return;
+					}
+
+					try {
+						// Disable the submit button to prevent double-clicks
+						const submitBtn = interface.querySelector('.branch-submit');
+						const originalText = submitBtn.textContent;
+						submitBtn.disabled = true;
+						submitBtn.textContent = 'Creating branch...';
+
+						// Fork the conversation up to the assistant message before this user message
+						const forkResponse = await fetch('?api=fork_conversation', {
+							method: 'POST',
+							headers: { 'Content-Type': 'application/json' },
+							body: JSON.stringify({
+								conversationId: currentConversationId,
+								messageIndex: messageIndex - 1 // messageIndex points to user message, so -1 gets the assistant message
+							})
+						});
+
+						const forkResult = await forkResponse.json();
+
+						console.log('Fork result:', forkResult);
+
+						if (!forkResponse.ok) {
+							throw new Error(forkResult.error || 'Failed to create branch');
+						}
+
+						// Store the new user message in the branched conversation
+						await fetch('?api=store_user_message', {
+							method: 'POST',
+							headers: { 'Content-Type': 'application/json' },
+							body: JSON.stringify({
+								conversationId: forkResult.newConversationId,
+								message: newQuestion
+							})
+						});
+
+						// Redirect to the new conversation with auto-submit flag
+						window.location.href = `?action=view&id=${forkResult.newConversationId}&auto_submit=1`;
+
+					} catch (error) {
+						console.error('Branch error:', error);
+						alert(`Failed to create branch: ${error.message}`);
+
+						// Re-enable the submit button
+						const submitBtn = interface.querySelector('.branch-submit');
+						submitBtn.disabled = false;
+						submitBtn.textContent = originalText;
+					}
+				}
+
 				// Event listeners
 				document.getElementById('send-message').addEventListener('click', sendMessage);
 				document.getElementById('user-input').addEventListener('keydown', (e) => {
@@ -1124,9 +1410,43 @@ function renderConversationItem( $storage, $id ) {
 					}
 				});
 
+				// Function to auto-submit the last user message (for branching)
+				async function autoSubmitLastUserMessage() {
+					const messages = document.querySelectorAll('.message');
+					const lastMessage = messages[messages.length - 1];
+
+					if (!lastMessage || !lastMessage.classList.contains('user')) {
+						console.log('No user message to auto-submit');
+						return;
+					}
+
+					// Get the last user message content
+					const userContent = lastMessage.querySelector('.message-content').textContent.trim();
+					console.log('Auto-submitting last user message:', userContent);
+
+					// Add to conversation context (message is already stored in DB)
+					conversationMessages.push({ role: 'user', content: userContent });
+
+					// Trigger the API call by calling sendMessage with auto-submit mode
+					await sendMessage(true); // Pass true to indicate auto-submit mode
+				}
+
 				// Initialize only if we're on a conversation page
 				if (currentConversationId) {
 					loadApiConfig();
+
+					// Handle auto-submit from branching
+					const urlParams = new URLSearchParams(window.location.search);
+					if (urlParams.get('auto_submit') === '1') {
+						// Wait for API config to load, then auto-submit
+						setTimeout(() => {
+							autoSubmitLastUserMessage();
+
+							// Clean up URL parameter
+							const newUrl = window.location.pathname + '?action=view&id=' + currentConversationId;
+							window.history.replaceState({}, '', newUrl);
+						}, 1000);
+					}
 				}
 				</script>
 			<?php else : ?>
