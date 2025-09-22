@@ -2,6 +2,7 @@
 require_once __DIR__ . '/includes/LogStorage.php';
 require_once __DIR__ . '/includes/Parsedown.php';
 require_once __DIR__ . '/includes/ParsedownMath.php';
+require_once __DIR__ . '/includes/ApiClient.php';
 
 $dbPath = __DIR__ . '/chats.sqlite';
 if ( ! file_exists( $dbPath ) ) {
@@ -10,6 +11,7 @@ if ( ! file_exists( $dbPath ) ) {
 
 $storage = new SQLiteLogStorage( $dbPath );
 $parsedown = new ParsedownMath();
+$apiClient = new ApiClient();
 
 $action = $_GET['action'] ?? 'list';
 $conversationId = $_GET['id'] ?? null;
@@ -39,6 +41,92 @@ echo json_encode(
     'hasMore' => count( $conversations ) === $limit,
     )
 );
+	exit;
+}
+
+// Handle API configuration request (provides keys for direct JavaScript API calls)
+if ( isset( $_GET['api'] ) && $_GET['api'] === 'config' ) {
+	header( 'Content-Type: application/json' );
+
+	// Get supported models including Ollama
+	$supportedModels = $apiClient->getSupportedModels();
+
+	// Add Ollama models if available
+	$ch = curl_init();
+	curl_setopt( $ch, CURLOPT_URL, 'http://localhost:11434/api/tags' );
+	curl_setopt( $ch, CURLOPT_RETURNTRANSFER, 1 );
+	curl_setopt( $ch, CURLOPT_TIMEOUT, 2 );
+	$ollamaModels = json_decode( curl_exec( $ch ), true );
+	curl_close( $ch );
+
+	if ( isset( $ollamaModels['models'] ) ) {
+		foreach ( $ollamaModels['models'] as $m ) {
+			$supportedModels[ $m['name'] ] = 'Ollama (local)';
+		}
+	}
+
+	$config = array(
+		'openai_key' => getenv( 'OPENAI_API_KEY', true ) ?: null,
+		'anthropic_key' => getenv( 'ANTHROPIC_API_KEY', true ) ?: null,
+		'supported_models' => $supportedModels,
+	);
+
+	echo json_encode( $config );
+	exit;
+}
+
+// Handle storing user message
+if ( $_SERVER['REQUEST_METHOD'] === 'POST' && isset( $_GET['api'] ) && $_GET['api'] === 'store_user_message' ) {
+	header( 'Content-Type: application/json' );
+
+	$input = json_decode( file_get_contents( 'php://input' ), true );
+
+	if ( ! $input || ! isset( $input['conversationId'] ) || ! isset( $input['message'] ) ) {
+		echo json_encode( array( 'error' => 'Invalid request' ) );
+		exit;
+	}
+
+	$conversationId = $input['conversationId'];
+	$message = $input['message'];
+
+	$storage->writeUserMessage( $conversationId, $message );
+	echo json_encode( array( 'success' => true ) );
+	exit;
+}
+
+// Handle storing assistant message and cost data
+if ( $_SERVER['REQUEST_METHOD'] === 'POST' && isset( $_GET['api'] ) && $_GET['api'] === 'store_assistant_message' ) {
+	header( 'Content-Type: application/json' );
+
+	$input = json_decode( file_get_contents( 'php://input' ), true );
+
+	if ( ! $input || ! isset( $input['conversationId'] ) || ! isset( $input['message'] ) ) {
+		echo json_encode( array( 'error' => 'Invalid request' ) );
+		exit;
+	}
+
+	$conversationId = $input['conversationId'];
+	$message = $input['message'];
+	$model = $input['model'] ?? '';
+	$usage = $input['usage'] ?? array();
+
+	// Store the message
+	$storage->writeAssistantMessage( $conversationId, $message );
+
+	// Calculate and store cost if usage data is provided
+	if ( ! empty( $usage ) && $model ) {
+		$inputTokens = $usage['prompt_tokens'] ?? $usage['input_tokens'] ?? 0;
+		$outputTokens = $usage['completion_tokens'] ?? $usage['output_tokens'] ?? 0;
+		$cacheReadTokens = $usage['cache_read_input_tokens'] ?? 0;
+		$cacheWriteTokens = $usage['cache_creation_input_tokens'] ?? 0;
+
+		$cost = $apiClient->calculateCost( $model, $inputTokens, $outputTokens, $cacheReadTokens, $cacheWriteTokens );
+		if ( $cost > 0 ) {
+			$storage->storeCostData( $conversationId, $cost, $inputTokens, $outputTokens );
+		}
+	}
+
+	echo json_encode( array( 'success' => true ) );
 	exit;
 }
 
@@ -225,6 +313,7 @@ function renderConversationItem( $storage, $id ) {
 	<link rel="stylesheet" href="katex/katex.min.css">
 	<script defer src="katex/katex.min.js"></script>
 	<script defer src="katex/auto-render.min.js"></script>
+	<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 	<style>
 		body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }
 		.container { max-width: 1200px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
@@ -580,6 +669,29 @@ function renderConversationItem( $storage, $id ) {
 					<?php endforeach; ?>
 				</div>
 
+				<!-- Continue Conversation Section -->
+				<?php if ( $conversationId && $metadata ) : ?>
+				<div id="continue-conversation" style="margin-top: 30px; padding: 20px; border-top: 2px solid #eee;">
+					<h3>Continue this conversation</h3>
+					<div id="chat-interface">
+						<div style="margin-bottom: 15px; color: #666; font-style: italic;">
+							<strong>Continuing with:</strong> <?php echo htmlspecialchars( $metadata['model'] ?? 'Unknown model' ); ?>
+						</div>
+						<div style="display: flex; gap: 10px; margin-top: 15px;">
+							<textarea id="user-input" placeholder="Type your message here..." style="flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 4px; resize: vertical; min-height: 60px;"></textarea>
+							<button id="send-message" style="padding: 10px 20px; background: #007cba; color: white; border: none; border-radius: 4px; cursor: pointer;" disabled>Send</button>
+						</div>
+						<div id="api-status" style="margin-top: 10px; padding: 10px; background: #fff3cd; border: 1px solid #ffeeba; border-radius: 4px; display: none;"></div>
+					</div>
+					<div id="api-not-available" style="display: none; padding: 15px; background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; border-radius: 4px;">
+						<strong>API keys not available.</strong> To continue conversations, please set your API keys:
+						<br><br>
+						<code>export OPENAI_API_KEY=sk-...</code><br>
+						<code>export ANTHROPIC_API_KEY=sk-...</code>
+					</div>
+				</div>
+				<?php endif; ?>
+
 				<script>
 				function toggleSystemPrompt(header) {
                     header.closest( 'div.message' ).classList.toggle('show');
@@ -650,6 +762,371 @@ function renderConversationItem( $storage, $id ) {
 						}
 						document.body.removeChild(textArea);
 					});
+				}
+
+				// Chat Interface JavaScript
+				let chatConfig = null;
+				let currentConversationId = <?php echo json_encode( $conversationId ); ?>;
+				let currentModel = '<?php echo htmlspecialchars( $metadata['model'] ?? '' ); ?>';
+				let conversationMessages = [];
+				let systemPrompt = null;
+
+				// Extract system prompt from conversation data
+				<?php
+				$hasSystemPrompt = false;
+				if ( $messages && ! empty( $messages ) ) {
+					$firstMessage = $messages[0];
+					if ( is_array( $firstMessage ) && isset( $firstMessage['role'] ) && $firstMessage['role'] === 'system' ) {
+						$hasSystemPrompt = true;
+						echo 'systemPrompt = ' . json_encode( $firstMessage['content'] ) . ';';
+					}
+				}
+				?>
+
+				// Load conversation messages for API context
+				<?php
+				echo 'conversationMessages = ';
+				$apiMessages = array();
+				if ( $messages ) {
+					foreach ( $messages as $message ) {
+						if ( is_array( $message ) && isset( $message['role'] ) ) {
+							// Skip system messages as they're handled separately
+							if ( $message['role'] !== 'system' ) {
+								$apiMessages[] = array(
+									'role' => $message['role'],
+									'content' => $message['content']
+								);
+							}
+						}
+					}
+				}
+				echo json_encode( $apiMessages );
+				?>;
+
+				async function loadApiConfig() {
+					try {
+						const response = await fetch('?api=config');
+						chatConfig = await response.json();
+
+						// Check if we have any supported provider for the current model
+						const provider = chatConfig.supported_models[currentModel];
+						if (!provider) {
+							document.getElementById('api-not-available').style.display = 'block';
+							return;
+						}
+
+						// Check if we have the required API key for the current model
+						if (provider === 'OpenAI' && !chatConfig.openai_key) {
+							document.getElementById('api-not-available').style.display = 'block';
+							return;
+						}
+						if (provider === 'Anthropic' && !chatConfig.anthropic_key) {
+							document.getElementById('api-not-available').style.display = 'block';
+							return;
+						}
+						// Ollama (local) doesn't need API keys, so it's always available if the model is supported
+
+						// Enable send button when API is ready
+						document.getElementById('send-message').disabled = false;
+					} catch (error) {
+						console.error('Failed to load API config:', error);
+						document.getElementById('api-not-available').style.display = 'block';
+					}
+				}
+
+
+
+				async function sendMessage() {
+					const userInput = document.getElementById('user-input');
+					const sendButton = document.getElementById('send-message');
+					const statusDiv = document.getElementById('api-status');
+
+					if (!userInput.value.trim() || !currentModel) return;
+
+					const userMessage = userInput.value.trim();
+					userInput.value = '';
+					sendButton.disabled = true;
+
+					// Add user message to conversation
+					appendMessage('user', userMessage);
+
+					// Store user message in database
+					try {
+						await fetch('?api=store_user_message', {
+							method: 'POST',
+							headers: { 'Content-Type': 'application/json' },
+							body: JSON.stringify({
+								conversationId: currentConversationId,
+								message: userMessage
+							})
+						});
+					} catch (error) {
+						console.error('Failed to store user message:', error);
+					}
+
+					// Add user message to conversation context
+					conversationMessages.push({ role: 'user', content: userMessage });
+
+					// Prepare API request
+					const provider = chatConfig.supported_models[currentModel];
+					console.log('Current model:', currentModel, 'Provider:', provider, 'Config:', chatConfig);
+					let apiUrl, headers, requestBody;
+
+					if (provider === 'OpenAI') {
+						apiUrl = 'https://api.openai.com/v1/chat/completions';
+						headers = {
+							'Content-Type': 'application/json',
+							'Authorization': `Bearer ${chatConfig.openai_key}`
+						};
+
+						const messages = [...conversationMessages];
+						if (systemPrompt) {
+							messages.unshift({ role: 'system', content: systemPrompt });
+						}
+
+						requestBody = {
+							model: currentModel,
+							messages: messages,
+							stream: true
+						};
+					} else if (provider === 'Anthropic') {
+						apiUrl = 'https://api.anthropic.com/v1/messages';
+						headers = {
+							'Content-Type': 'application/json',
+							'x-api-key': chatConfig.anthropic_key,
+							'anthropic-version': '2023-06-01'
+						};
+
+						requestBody = {
+							model: currentModel,
+							messages: conversationMessages,
+							max_tokens: 3200,
+							stream: true
+						};
+
+						if (systemPrompt) {
+							requestBody.system = systemPrompt;
+						}
+					} else if (provider === 'Ollama (local)') {
+						apiUrl = 'http://localhost:11434/v1/chat/completions';
+						headers = {
+							'Content-Type': 'application/json'
+						};
+
+						const messages = [...conversationMessages];
+						if (systemPrompt) {
+							messages.unshift({ role: 'system', content: systemPrompt });
+						}
+
+						requestBody = {
+							model: currentModel,
+							messages: messages,
+							stream: true
+						};
+					} else {
+						throw new Error(`Unsupported provider: ${provider}`);
+					}
+
+					// Show status
+					statusDiv.style.display = 'block';
+					statusDiv.innerHTML = `<strong>Sending to ${provider}...</strong>`;
+
+					try {
+						// Create assistant message container
+						const assistantMessageDiv = appendMessage('assistant', '');
+						let assistantMessage = '';
+						let usage = null;
+
+						console.log('Making request to:', apiUrl, 'with headers:', headers, 'and body:', requestBody);
+
+						const response = await fetch(apiUrl, {
+							method: 'POST',
+							headers: headers,
+							body: JSON.stringify(requestBody)
+						});
+
+						console.log('Response status:', response.status, 'Response headers:', [...response.headers.entries()]);
+
+						if (!response.ok) {
+							const errorText = await response.text();
+							console.error('API error response:', errorText);
+							throw new Error(`API request failed: ${response.status} - ${errorText}`);
+						}
+
+						// Check if response is actually streamed
+						const contentType = response.headers.get('content-type');
+						const transferEncoding = response.headers.get('transfer-encoding');
+						console.log('Response content-type:', contentType, 'Transfer-Encoding:', transferEncoding);
+
+						const reader = response.body.getReader();
+						const decoder = new TextDecoder();
+
+						statusDiv.innerHTML = `<strong>Receiving response from ${provider}...</strong>`;
+
+						let buffer = '';
+						while (true) {
+							const { done, value } = await reader.read();
+							if (done) break;
+
+							buffer += decoder.decode(value, { stream: true });
+
+							// Handle different response formats based on provider
+							if (provider === 'OpenAI' || provider === 'Ollama (local)') {
+								// OpenAI/Ollama use Server-Sent Events format
+								const lines = buffer.split('\n');
+								buffer = lines.pop() || '';
+
+								for (const line of lines) {
+									const trimmedLine = line.trim();
+									if (!trimmedLine) continue;
+
+									if (trimmedLine.startsWith('data: ')) {
+										const data = trimmedLine.slice(6);
+										if (data === '[DONE]') continue;
+
+										try {
+											const parsed = JSON.parse(data);
+											if (parsed.choices?.[0]?.delta?.content) {
+												const delta = parsed.choices[0].delta.content;
+												assistantMessage += delta;
+												assistantMessageDiv.querySelector('.message-content').innerHTML =
+													(typeof marked !== 'undefined') ? marked.parse(assistantMessage) : assistantMessage;
+											}
+											if (parsed.usage) {
+												usage = parsed.usage;
+											}
+										} catch (e) {
+											console.warn('Failed to parse OpenAI/Ollama streaming data:', data, e);
+										}
+									}
+								}
+							} else if (provider === 'Anthropic') {
+								// Anthropic uses newline-delimited JSON
+								const lines = buffer.split('\n');
+								buffer = lines.pop() || '';
+
+								for (const line of lines) {
+									const trimmedLine = line.trim();
+									if (!trimmedLine) continue;
+
+									// Skip Server-Sent Events format if present
+									let jsonData = trimmedLine;
+									if (trimmedLine.startsWith('data: ')) {
+										jsonData = trimmedLine.slice(6);
+										if (jsonData === '[DONE]') continue;
+									}
+
+									try {
+										const parsed = JSON.parse(jsonData);
+										if (parsed.type === 'content_block_delta') {
+											const delta = parsed.delta?.text || '';
+											assistantMessage += delta;
+											assistantMessageDiv.querySelector('.message-content').innerHTML =
+												(typeof marked !== 'undefined') ? marked.parse(assistantMessage) : assistantMessage;
+										}
+										if (parsed.type === 'message_delta' && parsed.usage) {
+											usage = parsed.usage;
+										}
+									} catch (e) {
+										console.warn('Failed to parse Anthropic streaming data:', jsonData, e);
+									}
+								}
+							}
+						}
+
+						// Store assistant message in database
+						await fetch('?api=store_assistant_message', {
+							method: 'POST',
+							headers: { 'Content-Type': 'application/json' },
+							body: JSON.stringify({
+								conversationId: currentConversationId,
+								message: assistantMessage,
+								model: currentModel,
+								usage: usage
+							})
+						});
+
+						// Add to conversation context
+						conversationMessages.push({ role: 'assistant', content: assistantMessage });
+
+						statusDiv.innerHTML = `<strong>✓ Response completed</strong>`;
+						setTimeout(() => {
+							statusDiv.style.display = 'none';
+						}, 2000);
+
+					} catch (error) {
+						console.error('Chat error:', error);
+
+						// Handle CORS errors that are common with direct API calls
+						if (error.message.includes('Failed to fetch') || error.message.includes('CORS')) {
+							statusDiv.innerHTML = `<strong style="color: #d32f2f;">Network Error: CORS or connection issue</strong>`;
+							appendMessage('system', `Network Error: ${error.message}. This might be due to CORS restrictions when calling APIs directly from the browser. Consider using a CORS proxy or configuring your browser to allow cross-origin requests.`);
+						} else {
+							statusDiv.innerHTML = `<strong style="color: #d32f2f;">Error: ${error.message}</strong>`;
+							appendMessage('system', `Error: ${error.message}`);
+						}
+					}
+
+					sendButton.disabled = false;
+				}
+
+				function appendMessage(role, content) {
+					const messagesContainer = document.querySelector('.messages');
+					const messageDiv = document.createElement('div');
+					messageDiv.className = `message ${role}`;
+
+					const headerDiv = document.createElement('div');
+					headerDiv.className = 'message-header';
+					const currentTime = new Date().toISOString().slice(0, 19).replace('T', ' ');
+					headerDiv.innerHTML = `
+						<div class="message-role">${role}</div>
+						<div style="display: flex; align-items: center; gap: 10px;">
+							<button onclick="toggleRawSource(this)" class="display-markdown">View Markdown</button>
+							<div class="message-timestamp">${currentTime}</div>
+						</div>
+					`;
+
+					const contentDiv = document.createElement('div');
+					contentDiv.className = 'message-content';
+					contentDiv.innerHTML = content;
+
+					const rawDiv = document.createElement('div');
+					rawDiv.className = 'message-raw';
+					rawDiv.style.display = 'none';
+					rawDiv.style.marginTop = '10px';
+					rawDiv.innerHTML = `
+						<div style="background: #f8f9fa; border: 1px solid #ddd; border-radius: 4px; padding: 10px;">
+							<div style="font-weight: bold; margin-bottom: 5px; font-size: 0.9em; color: #666;">Raw Message Content:</div>
+							<pre style="background: #fff; border: 1px solid #ddd; padding: 8px; border-radius: 3px; font-size: 0.8em; white-space: pre-wrap; word-wrap: break-word; margin: 0;">${content.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>
+						</div>
+					`;
+
+					messageDiv.appendChild(headerDiv);
+					messageDiv.appendChild(contentDiv);
+					messageDiv.appendChild(rawDiv);
+					messagesContainer.appendChild(messageDiv);
+
+					// Scroll to keep the input area visible after the new message
+					setTimeout(() => {
+						const inputArea = document.getElementById('user-input');
+						inputArea.scrollIntoView({ behavior: 'smooth', block: 'end' });
+					}, 100);
+
+					return messageDiv;
+				}
+
+				// Event listeners
+				document.getElementById('send-message').addEventListener('click', sendMessage);
+				document.getElementById('user-input').addEventListener('keydown', (e) => {
+					if (e.key === 'Enter' && !e.shiftKey) {
+						e.preventDefault();
+						sendMessage();
+					}
+				});
+
+				// Initialize only if we're on a conversation page
+				if (currentConversationId) {
+					loadApiConfig();
 				}
 				</script>
 			<?php else : ?>

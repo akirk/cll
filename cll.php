@@ -1,11 +1,11 @@
 <?php
 require_once __DIR__ . '/includes/LogStorage.php';
 require_once __DIR__ . '/includes/MessageStreamer.php';
+require_once __DIR__ . '/includes/ApiClient.php';
 
 $version = '2.0.2';
-$openai_key = getenv( 'OPENAI_API_KEY', true );
-$anthropic_key = getenv( 'ANTHROPIC_API_KEY', true );
 $ansi = function_exists( 'posix_isatty' ) && posix_isatty( STDOUT );
+$apiClient = new ApiClient();
 
 $options = getopt( 'ds:li:p:vhfm::r:w::n', array( 'help', 'version', 'webui' ), $initial_input );
 
@@ -61,21 +61,20 @@ $messageStreamer = new MessageStreamer( $ansi, $logStorage );
 
 $system = false;
 
-$supported_models = array();
-$supported_models_file = __DIR__ . '/supported-models.json';
-if ( file_exists( $supported_models_file ) ) {
-	$supported_models = json_decode( file_get_contents( $supported_models_file ), true );
-	if ( ! is_array( $supported_models ) ) {
-		$supported_models = array();
-	}
-} else {
+$supported_models = $apiClient->getSupportedModels();
+if ( empty( $supported_models ) ) {
 	// Update the models.
 	$options['m'] = '';
 }
 
+// For now, keep the original model updating logic since ApiClient loads from the same file
+// TODO: Move model updating logic to ApiClient in the future
 if ( $online && isset( $options['m'] ) && empty( $options['m'] ) ) {
 	// Update models.
-	$supported_models = array();
+	$updated_models = array();
+	$openai_key = getenv( 'OPENAI_API_KEY', true );
+	$anthropic_key = getenv( 'ANTHROPIC_API_KEY', true );
+
 	if ( ! empty( $openai_key ) ) {
 		fprintf( STDERR, 'Updating supported models... ' );
 
@@ -94,7 +93,7 @@ if ( $online && isset( $options['m'] ) && empty( $options['m'] ) ) {
 
 		foreach ( $data['data'] as $model ) {
 			if ( preg_match( '/^(gpt-\d|o\d-)/', $model['id'] ) && false === strpos( $model['id'], 'preview' ) ) {
-				$supported_models[ $model['id'] ] = 'OpenAI';
+				$updated_models[ $model['id'] ] = 'OpenAI';
 			}
 		}
 	}
@@ -114,14 +113,16 @@ if ( $online && isset( $options['m'] ) && empty( $options['m'] ) ) {
 
 		foreach ( $data['data'] as $model ) {
 			if ( $model['type'] === 'model' && 0 === strpos( $model['id'], 'claude' ) ) {
-				$supported_models[ $model['id'] ] = 'Anthropic';
+				$updated_models[ $model['id'] ] = 'Anthropic';
 			}
 		}
 	}
 
-	fprintf( STDERR, 'done (%d models found).' . PHP_EOL, count( $supported_models ) );
+	fprintf( STDERR, 'done (%d models found).' . PHP_EOL, count( $updated_models ) );
 
-	file_put_contents( $supported_models_file, json_encode( $supported_models, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ) );
+	$supported_models_file = __DIR__ . '/supported-models.json';
+	file_put_contents( $supported_models_file, json_encode( $updated_models, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ) );
+	$supported_models = $updated_models;
 }
 
 curl_setopt( $ch, CURLOPT_URL, 'http://localhost:11434/api/tags' );
@@ -317,6 +318,7 @@ Arguments:
 Notes:
   - To input multiline messages, send an empty message.
   - To end the conversation, enter "bye".
+  - To switch to web UI during conversation, type "webui", ":webui", or "/webui".
   - System prompts are managed via the web interface at --webui.
 
 Example usage:
@@ -404,7 +406,7 @@ if ( isset( $options['m'] ) ) {
 		exit( 1 );
 	}
 }
-$model_provider = $supported_models[ $model ];
+$model_provider = $apiClient->getModelProvider( $model );
 $wrapper = array(
 	'model'  => $model,
 	'stream' => true,
@@ -769,76 +771,8 @@ $total_cache_read_tokens = 0;
 $total_cache_write_tokens = 0;
 $api_call_count = 0;
 
-function calculate_cost( $model, $input_tokens, $output_tokens, $cache_read_tokens = 0, $cache_write_tokens = 0 ) {
-	static $pricing_data = null;
-
-	// Load pricing data once
-	if ( $pricing_data === null ) {
-		$pricing_file = __DIR__ . '/pricing.json';
-		if ( file_exists( $pricing_file ) ) {
-			$pricing_json = file_get_contents( $pricing_file );
-			$pricing_data = json_decode( $pricing_json, true );
-
-			if ( json_last_error() !== JSON_ERROR_NONE ) {
-				error_log( 'Invalid pricing.json format: ' . json_last_error_msg() );
-				$pricing_data = false;
-			}
-		} else {
-			error_log( 'pricing.json file not found: ' . $pricing_file );
-			$pricing_data = false;
-		}
-	}
-
-	// Return 0 if pricing data couldn't be loaded
-	if ( ! $pricing_data || ! isset( $pricing_data['models'] ) ) {
-		return 0;
-	}
-
-	// Find the best matching pricing
-	$model_pricing = null;
-	foreach ( $pricing_data['models'] as $price_model => $prices ) {
-		if ( strpos( $model, $price_model ) !== false ) {
-			$model_pricing = $prices;
-			break;
-		}
-	}
-
-	// Return 0 for unknown models (no fallback)
-	if ( ! $model_pricing ) {
-		return 0;
-	}
-
-	$per_tokens = $pricing_data['per_tokens'] ?? 1000000;
-
-	$cost = 0;
-	$cost += ( $input_tokens / $per_tokens ) * $model_pricing['input'];
-	$cost += ( $output_tokens / $per_tokens ) * $model_pricing['output'];
-
-	if ( isset( $model_pricing['cache_read'] ) && $cache_read_tokens > 0 ) {
-		$cost += ( $cache_read_tokens / $per_tokens ) * $model_pricing['cache_read'];
-	}
-
-	if ( isset( $model_pricing['cache_write'] ) && $cache_write_tokens > 0 ) {
-		$cost += ( $cache_write_tokens / $per_tokens ) * $model_pricing['cache_write'];
-	}
-
-	return $cost;
-}
-
-if ( 'OpenAI' === $model_provider ) {
-	curl_setopt( $ch, CURLOPT_URL, 'https://api.openai.com/v1/chat/completions' );
-	$headers[] = 'Authorization: Bearer ' . $openai_key;
-} elseif ( 'Anthropic' === $model_provider ) {
-	curl_setopt( $ch, CURLOPT_URL, 'https://api.anthropic.com/v1/messages' );
-	$headers[] = 'x-api-key: ' . $anthropic_key;
-	$headers[] = 'anthropic-version: 2023-06-01';
-	$headers[] = 'Content-Type: application/json';
-} elseif ( 'Ollama (local)' === $model_provider ) {
-	curl_setopt( $ch, CURLOPT_URL, 'http://localhost:11434/v1/chat/completions' );
-}
 
 $chunk_overflow = '';
-curl_setopt( $ch, CURLOPT_HTTPHEADER, $headers );
 // The curl write function will be set after MessageStreamer is created
 
 // Start chatting.
@@ -865,6 +799,53 @@ while ( true ) {
 
 	if ( false === $input || in_array( strtolower( trim( $input ) ), array( 'quit', 'exit', 'bye' ) ) ) {
 		break;
+	}
+
+	// Check for webui switch command
+	if ( in_array( strtolower( trim( $input ) ), array( 'webui', ':webui', '/webui' ) ) ) {
+		$port = 8381; // default port
+		$host = 'localhost';
+		$url = "http://{$host}:{$port}";
+
+		echo "Switching to web UI at {$url}...", PHP_EOL;
+
+		// Check if port is available
+		$socket = @fsockopen( $host, $port, $errno, $errstr, 1 );
+		if ( $socket ) {
+			fclose( $socket );
+			echo "Web UI already running. Opening browser...", PHP_EOL;
+		} else {
+			// Start PHP built-in server in background
+			$command = "php -S {$host}:{$port} -t " . escapeshellarg( __DIR__ ) . ' > /dev/null 2>&1 &';
+			exec( $command );
+			echo "Starting web server...", PHP_EOL;
+
+			// Give server time to start
+			sleep( 1 );
+
+			// Verify server started
+			$socket = @fsockopen( $host, $port, $errno, $errstr, 2 );
+			if ( ! $socket ) {
+				echo "Failed to start web server: {$errstr}", PHP_EOL;
+				continue;
+			}
+			fclose( $socket );
+			echo "Web server started successfully.", PHP_EOL;
+		}
+
+		// Open browser to the current conversation if we have one
+		if ( isset( $conversation_id ) && $conversation_id ) {
+			$conversation_url = "{$url}?action=view&id={$conversation_id}";
+			exec( "open '{$conversation_url}'" );
+			echo "Opening current conversation in browser: {$conversation_url}", PHP_EOL;
+		} else {
+			exec( "open '{$url}'" );
+			echo "Opening web UI in browser: {$url}", PHP_EOL;
+		}
+
+		echo "You can continue this conversation in the web interface.", PHP_EOL;
+		echo "Type 'quit' to exit CLI or continue typing here.", PHP_EOL;
+		continue;
 	}
 
 	if ( empty( $input ) || '.' === $input ) {
@@ -1070,25 +1051,17 @@ while ( true ) {
 		'role'    => 'user',
 		'content' => $input,
 	);
-	$wrapper['messages'] = $messages;
 
-	if ( 'Anthropic' === $model_provider ) {
-		$wrapper['max_tokens'] = 3200;
+	// Use ApiClient to prepare the request
+	try {
+		$apiConfig = $apiClient->prepareApiRequest( $model, $messages, $system );
+		curl_setopt( $ch, CURLOPT_URL, $apiConfig['url'] );
+		curl_setopt( $ch, CURLOPT_HTTPHEADER, $apiConfig['headers'] );
+		curl_setopt( $ch, CURLOPT_POSTFIELDS, json_encode( $apiConfig['data'] ) );
+	} catch ( Exception $e ) {
+		echo 'API Error: ', $e->getMessage(), PHP_EOL;
+		exit( 1 );
 	}
-
-	if ( 'OpenAI' === $model_provider ) {
-		$wrapper['stream_options'] = array(
-			'include_usage' => true,
-		);
-	}
-
-	curl_setopt(
-	    $ch,
-	    CURLOPT_POSTFIELDS,
-	    json_encode(
-	        $wrapper
-	    )
-	);
 
 	if ( $ansi || isset( $options['v'] ) ) {
 		echo PHP_EOL;
@@ -1181,7 +1154,7 @@ while ( true ) {
 
 		// Calculate and store cost for this API call
 		if ( $conversation_id && ( $current_input_tokens > 0 || $current_output_tokens > 0 ) ) {
-			$current_cost = calculate_cost( $model, $current_input_tokens, $current_output_tokens, $current_cache_read_tokens, $current_cache_write_tokens );
+			$current_cost = $apiClient->calculateCost( $model, $current_input_tokens, $current_output_tokens, $current_cache_read_tokens, $current_cache_write_tokens );
 			if ( $current_cost > 0 ) {
 				$logStorage->storeCostData( $conversation_id, $current_cost, $current_input_tokens, $current_output_tokens );
 			}
@@ -1216,7 +1189,7 @@ while ( true ) {
 if ( isset( $options['v'] ) ) {
 	$conversation_end_time = microtime( true );
 	$total_wall_duration = $conversation_end_time - $conversation_start_time;
-	$cost = calculate_cost( $model, $total_input_tokens, $total_output_tokens, $total_cache_read_tokens, $total_cache_write_tokens );
+	$cost = $apiClient->calculateCost( $model, $total_input_tokens, $total_output_tokens, $total_cache_read_tokens, $total_cache_write_tokens );
 
 	echo PHP_EOL;
 
