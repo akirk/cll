@@ -1217,6 +1217,12 @@ function renderConversationItem( $storage, $id ) {
 							}
 						}
 
+						// Update the raw markdown content now that streaming is complete
+						const rawDiv = assistantMessageDiv.querySelector('.message-raw pre');
+						if (rawDiv) {
+							rawDiv.textContent = assistantMessage;
+						}
+
 						// Store assistant message in database
 						await fetch('?api=store_assistant_message', {
 							method: 'POST',
@@ -1277,12 +1283,16 @@ function renderConversationItem( $storage, $id ) {
 					rawDiv.className = 'message-raw';
 					rawDiv.style.display = 'none';
 					rawDiv.style.marginTop = '10px';
+					const rawPre = document.createElement('pre');
+					rawPre.style.cssText = 'background: #fff; border: 1px solid #ddd; padding: 8px; border-radius: 3px; font-size: 0.8em; white-space: pre-wrap; word-wrap: break-word; margin: 0;';
+					rawPre.textContent = content;
+
 					rawDiv.innerHTML = `
 						<div style="background: #f8f9fa; border: 1px solid #ddd; border-radius: 4px; padding: 10px;">
 							<div style="font-weight: bold; margin-bottom: 5px; font-size: 0.9em; color: #666;">Raw Message Content:</div>
-							<pre style="background: #fff; border: 1px solid #ddd; padding: 8px; border-radius: 3px; font-size: 0.8em; white-space: pre-wrap; word-wrap: break-word; margin: 0;">${content.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>
 						</div>
 					`;
+					rawDiv.querySelector('div').appendChild(rawPre);
 
 					messageDiv.appendChild(headerDiv);
 					messageDiv.appendChild(contentDiv);
