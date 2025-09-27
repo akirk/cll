@@ -10,6 +10,7 @@ class ApiClient {
 		$this->openaiKey = getenv( 'OPENAI_API_KEY', true );
 		$this->anthropicKey = getenv( 'ANTHROPIC_API_KEY', true );
 		$this->loadSupportedModels();
+		$this->loadOllamaModels();
 		$this->initializeCurl();
 	}
 
@@ -22,6 +23,25 @@ class ApiClient {
 			}
 		} else {
 			$this->supportedModels = array();
+		}
+	}
+
+	private function loadOllamaModels() {
+		$ch = curl_init();
+		curl_setopt( $ch, CURLOPT_URL, 'http://localhost:11434/api/tags' );
+		curl_setopt( $ch, CURLOPT_RETURNTRANSFER, 1 );
+		curl_setopt( $ch, CURLOPT_TIMEOUT, 2 );
+		$response = curl_exec( $ch );
+		$httpCode = curl_getinfo( $ch, CURLINFO_HTTP_CODE );
+		curl_close( $ch );
+
+		if ( $httpCode === 200 && $response ) {
+			$ollama_models = json_decode( $response, true );
+			if ( isset( $ollama_models['models'] ) ) {
+				foreach ( $ollama_models['models'] as $m ) {
+					$this->supportedModels[ $m['name'] ] = 'Ollama (local)';
+				}
+			}
 		}
 	}
 
