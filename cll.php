@@ -5,9 +5,8 @@ require_once __DIR__ . '/includes/ApiClient.php';
 
 $version = '2.0.2';
 $ansi = function_exists( 'posix_isatty' ) && posix_isatty( STDOUT );
-$apiClient = new ApiClient();
 
-$options = getopt( 'ds:li:p:vhfm::r:w::n', array( 'help', 'version', 'webui' ), $initial_input );
+$options = getopt( 'ds:li:p:vhfm::r:w::nto', array( 'help', 'version', 'webui', 'show-thinking', 'offline' ), $initial_input );
 
 $new_argv = array( $_SERVER['argv'][0] );
 foreach ( $_SERVER['argv'] as $i => $arg ) {
@@ -28,11 +27,73 @@ $ch = curl_init();
 curl_setopt( $ch, CURLOPT_RETURNTRANSFER, 1 );
 curl_setopt( $ch, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1 );
 
-function dont_auto_complete( $input, $index ) {
-	return array(); }
+// Autocomplete function will be set later after models are loaded
+$autocomplete_models = array();
+
+function command_autocomplete( $input, $index ) {
+	global $autocomplete_models;
+
+	// Get the full line and current word
+	$info = readline_info();
+	$text = substr( $info['line_buffer'], 0, $info['end'] );
+
+	$commands = array(
+		'help',
+		'?',
+		'models',
+		'update',
+		'use',
+		'system',
+		'default',
+		't',
+		'debug',
+		'tokens',
+		'w',
+		'webui',
+		'quit',
+		'exit',
+		'bye',
+	);
+
+	// If line starts with "use ", suggest model names
+	if ( preg_match( '/^use\s+(.*)$/', $text, $matches ) ) {
+		$modelPrefix = $matches[1];
+		$completions = array();
+		foreach ( $autocomplete_models as $model ) {
+			if ( empty( $modelPrefix ) || strpos( $model, $modelPrefix ) === 0 ) {
+				$completions[] = $model;
+			}
+		}
+		return $completions;
+	}
+
+	// Check if input matches a model name (allow autocomplete for direct model switching)
+	$modelMatches = array();
+	foreach ( $autocomplete_models as $model ) {
+		if ( strpos( $model, $input ) === 0 ) {
+			$modelMatches[] = $model;
+		}
+	}
+
+	// Check if input matches a command
+	$commandMatches = array();
+	foreach ( $commands as $cmd ) {
+		if ( strpos( $cmd, $input ) === 0 ) {
+			$commandMatches[] = $cmd;
+		}
+	}
+
+	// Prefer commands over models for short inputs (1-2 chars) to avoid autocomplete noise
+	if ( strlen( $input ) <= 2 && ! empty( $commandMatches ) ) {
+		return $commandMatches;
+	}
+
+	// Otherwise return both commands and models
+	return array_merge( $commandMatches, $modelMatches );
+}
 
 
-readline_completion_function( 'dont_auto_complete' );
+readline_completion_function( 'command_autocomplete' );
 
 $readline_history_file = __DIR__ . '/.history';
 $sqlite_db_path = __DIR__ . '/chats.sqlite';
@@ -58,80 +119,55 @@ if ( isset( $options['n'] ) ) {
 }
 
 $messageStreamer = new MessageStreamer( $ansi, $logStorage );
+if ( isset( $options['t'] ) || isset( $options['show-thinking'] ) ) {
+	$messageStreamer->setShowThinking( true );
+}
+
+// Initialize ApiClient with logStorage for SQLite model/pricing support
+$apiClient = new ApiClient( $logStorage );
 
 $system = false;
 
 $supported_models = $apiClient->getSupportedModels();
+
+// Check if we need to update models
+$shouldUpdate = false;
+$updateReason = '';
+
 if ( empty( $supported_models ) ) {
-	// Update the models.
-	$options['m'] = '';
-}
-
-// For now, keep the original model updating logic since ApiClient loads from the same file
-// TODO: Move model updating logic to ApiClient in the future
-if ( $online && isset( $options['m'] ) && empty( $options['m'] ) ) {
-	// Update models.
-	$updated_models = array();
-	$openai_key = getenv( 'OPENAI_API_KEY', true );
-	$anthropic_key = getenv( 'ANTHROPIC_API_KEY', true );
-
-	if ( ! empty( $openai_key ) ) {
-		fprintf( STDERR, 'Updating supported models... ' );
-
-		curl_setopt( $ch, CURLOPT_URL, 'https://api.openai.com/v1/models' );
-		curl_setopt(
-			$ch,
-			CURLOPT_HTTPHEADER,
-			array(
-				'Content-Type: application/json',
-				'Authorization: Bearer ' . $openai_key,
-			)
-		);
-
-		$response = curl_exec( $ch );
-		$data = json_decode( $response, true );
-
-		foreach ( $data['data'] as $model ) {
-			if ( preg_match( '/^(gpt-\d|o\d-)/', $model['id'] ) && false === strpos( $model['id'], 'preview' ) ) {
-				$updated_models[ $model['id'] ] = 'OpenAI';
-			}
+	$shouldUpdate = true;
+	$updateReason = 'No models found';
+} elseif ( isset( $options['m'] ) && empty( $options['m'] ) ) {
+	$shouldUpdate = true;
+	$updateReason = 'Manual update requested';
+} elseif ( $logStorage && method_exists( $logStorage, 'getLastModelUpdate' ) ) {
+	$lastUpdate = $logStorage->getLastModelUpdate();
+	if ( $lastUpdate ) {
+		$daysSinceUpdate = ( $time - $lastUpdate ) / 86400;
+		if ( $daysSinceUpdate > 5 ) {
+			$shouldUpdate = true;
+			$updateReason = sprintf( 'Last update %.1f days ago', $daysSinceUpdate );
 		}
 	}
-	if ( ! empty( $anthropic_key ) ) {
-		curl_setopt( $ch, CURLOPT_URL, 'https://api.anthropic.com/v1/models' );
-		curl_setopt(
-			$ch,
-			CURLOPT_HTTPHEADER,
-			array(
-				'x-api-key: ' . $anthropic_key,
-				'anthropic-version: 2023-06-01',
-				'Content-Type: application/json',
-			)
-		);
-		$response = curl_exec( $ch );
-		$data = json_decode( $response, true );
+}
 
-		foreach ( $data['data'] as $model ) {
-			if ( $model['type'] === 'model' && 0 === strpos( $model['id'], 'claude' ) ) {
-				$updated_models[ $model['id'] ] = 'Anthropic';
-			}
+// Update models from APIs if needed
+if ( $shouldUpdate ) {
+	fprintf( STDERR, "Updating models from APIs... (%s)\n", $updateReason );
+	$counts = $apiClient->updateModelsFromApis();
+	fprintf( STDERR, "✓ Updated models: " );
+	$parts = array();
+	foreach ( $counts as $provider => $count ) {
+		if ( $count > 0 ) {
+			$parts[] = "{$provider} ({$count})";
 		}
 	}
-
-	fprintf( STDERR, 'done (%d models found).' . PHP_EOL, count( $updated_models ) );
-
-	$supported_models_file = __DIR__ . '/supported-models.json';
-	file_put_contents( $supported_models_file, json_encode( $updated_models, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ) );
-	$supported_models = $updated_models;
+	fprintf( STDERR, "%s\n", implode( ', ', $parts ) );
+	$supported_models = $apiClient->getSupportedModels();
 }
 
-curl_setopt( $ch, CURLOPT_URL, 'http://localhost:11434/api/tags' );
-$ollama_models = json_decode( curl_exec( $ch ), true );
-if ( isset( $ollama_models['models'] ) ) {
-	foreach ( $ollama_models['models'] as $m ) {
-		$supported_models[ $m['name'] ] = 'Ollama (local)';
-	}
-}
+// Populate autocomplete models
+$autocomplete_models = array_keys( $supported_models );
 
 // Handle webui option before checking for supported models
 if ( isset( $options['w'] ) || isset( $options['webui'] ) ) {
@@ -228,7 +264,20 @@ uksort(
 		return 0;
 	}
 );
-$model = key( $supported_models );
+
+// Determine if we're in offline mode
+$isOffline = isset( $options['offline'] ) || isset( $options['o'] ) || ! $online;
+
+// Get default model from SQLite or fallback to first available
+$model = null;
+if ( $logStorage && method_exists( $logStorage, 'getDefaultModel' ) ) {
+	$model = $logStorage->getDefaultModel( $isOffline );
+}
+
+// If no default found in SQLite, use first available model
+if ( ! $model ) {
+	$model = key( $supported_models );
+}
 
 $supported_models_by_provider = array();
 foreach ( $supported_models as $m => $provider ) {
@@ -239,54 +288,13 @@ foreach ( $supported_models as $m => $provider ) {
 		$model_group = strtok( $m, '-' ) . '-' . strtok( '-' );
 	} elseif ( 'Anthropic' === $provider ) {
 		$model_group = strtok( $m, '-' ) . '-' . strtok( '-' ) . '-' . strtok( '-' );
-	} elseif ( 'Ollama (local)' === $provider ) {
+	} elseif ( 'Ollama' === $provider ) {
 		$model_group = strtok( $m, ':' );
 	}
 
 	$supported_models_by_provider[ $provider ][ $model_group ][] = $m;
 }
 ksort( $supported_models_by_provider );
-$supported_models_list = '';
-foreach ( $supported_models_by_provider as $provider => $model_groups ) {
-	$provider_count = $provider . ' (' . count( array_merge( $model_groups ) ) . ')';
-	$supported_models_list .= PHP_EOL . PHP_EOL . $provider_count;
-	$supported_models_list .= PHP_EOL . str_repeat( '-', strlen( $provider_count ) );
-	ksort( $model_groups );
-	foreach ( $model_groups as $model_group => $models ) {
-		usort( $models, function ( $a, $b ) {
-			if ( preg_match( '/\d{4}/', $a ) && ! preg_match( '/\d{4}/', $b ) ) {
-				return 1; // a is newer than b
-			} else if ( preg_match( '/\d{4}/', $b ) && ! preg_match( '/\d{4}/', $a ) ) {
-				return -1; // b is newer than a
-			}
-			return strnatcmp( $a, $b );
-		} );
-		if ( $ansi ) {
-			$supported_models_list .= PHP_EOL . "\033[1m" . $model_group . "\033[m";
-			$t = ' ';
-		} else {
-			$supported_models_list .= PHP_EOL . $model_group;
-			$t = ': ';
-		}
-		foreach ( $models as $_model ) {
-			$supported_models_list .= $t;
-			$t = ' ';
-			if ( $ansi ) {
-				if ( 'OpenAI' === $provider && preg_match( '/\d{4}/', $_model ) ) {
-					// light gray
-					$supported_models_list .= "\033[90m";
-					$supported_models_list .= $_model;
-					$supported_models_list .= "\033[0m";
-				} else {
-					$supported_models_list .= $_model;
-				}
-			} else {
-				$supported_models_list .= $_model;
-			}
-		}
-	}
-}
-
 
 if ( isset( $options['version'] ) ) {
 	echo basename( $_SERVER['argv'][0] ), ' version ', $version, PHP_EOL;
@@ -296,9 +304,8 @@ if ( isset( $options['version'] ) ) {
 if ( isset( $options['h'] ) || isset( $options['help'] ) ) {
 	$offline = ! $online ? "(we're offline)" : '';
 	$self = basename( $_SERVER['argv'][0] );
-	$padded_supported_models_list = str_replace( PHP_EOL, PHP_EOL . '    | ', $supported_models_list );
 	echo <<<USAGE
-Usage: $self [-l] [-f] [-r [number|searchterm]] [-m model] [-s [system_prompt|id]] [-i input_file_s] [-p picture_file] [-w port|--webui] [conversation_input]
+Usage: $self [-l] [-f] [-r [number|searchterm]] [-m model] [-s [system_prompt|id]] [-i input_file_s] [-p picture_file] [-w port|--webui] [-t|--show-thinking] [conversation_input]
 
 Options:
   -l                   Resume last conversation.
@@ -311,14 +318,17 @@ Options:
   -p picture_file      Add an picture as input (only gpt-4o).
   -s [prompt|id|name]  System prompt: text, saved prompt ID/name, or empty to list saved prompts.
   -w port|--webui      Launch web UI on specified port (default: 8080) and open browser.
+  -t, --show-thinking  Show thinking process for reasoning models (o1, o3, Claude with thinking).
+  -n                   Don't save conversation to database (private mode).
+  -o, --offline        Force offline mode (use local Ollama models only).
 
 Arguments:
   conversation_input  Input for the first conversation.
 
 Notes:
+  - Type "help" or "?" at the prompt to see available commands.
   - To input multiline messages, send an empty message.
   - To end the conversation, enter "bye".
-  - To switch to web UI during conversation, type "webui", ":webui", or "/webui".
   - System prompts are managed via the web interface at --webui.
 
 Example usage:
@@ -355,9 +365,8 @@ Example usage:
   $self --webui
     Launch web UI on default port 8080 and open browser.
 
-  $self -m gpt-3.5-turbo-16k
-    Use a ChatGPT model with 16k tokens instead of 4k.
-    Supported models: $padded_supported_models_list $offline
+  $self -m gpt-4o-mini
+    Use a specific model. Type 'models' in the CLI to see all available models.
 
 
 USAGE;
@@ -402,7 +411,8 @@ if ( isset( $options['m'] ) ) {
 		}
 	}
 	if ( ! $model ) {
-		fprintf( STDERR, 'Supported Models: ' . $supported_models_list . PHP_EOL );
+		fprintf( STDERR, "Error: Model '{$options['m']}' not found.\n" );
+		fprintf( STDERR, "Run with no arguments and type 'models' to see available models.\n" );
 		exit( 1 );
 	}
 }
@@ -413,7 +423,8 @@ $wrapper = array(
 );
 
 if ( $ansi || isset( $options['v'] ) ) {
-	fprintf( STDERR, 'Model: ' . $model . ' via ' . $model_provider . ( isset( $options['v'] ) ? ' (verbose)' : '' ) . PHP_EOL );
+	$offlineLabel = ( $model_provider === 'Ollama' ) ? ' \033[90m(offline)\033[m' : '';
+	fprintf( STDERR, 'Model: ' . $model . ' via ' . $model_provider . $offlineLabel . ( isset( $options['v'] ) ? ' (verbose)' : '' ) . " - \033[90m'help' for commands, 't' for thinking, 'w' for webui\033[m\n" );
 }
 
 // Let SQLite auto-generate the conversation ID
@@ -797,12 +808,351 @@ while ( true ) {
 		}
 	}
 
+	// Handle 't' command to view last thought process
+	if ( trim( $input ) === 't' && ! empty( $thinking ) ) {
+		echo "\033[90m" . PHP_EOL;
+		echo '─── Thought Process ───' . PHP_EOL;
+		echo $thinking . PHP_EOL;
+		echo '───────────────────────' . PHP_EOL;
+		echo "\033[m";
+		continue;
+	}
+
+	// Handle 'debug' command to view last tokens and chunks
+	if ( preg_match( '/^(?:debug|:debug|\/debug|tokens)(\s+(json|save))?$/i', trim( $input ), $debugMatches ) ) {
+		$lastTokens = $messageStreamer->getLastTokens();
+		$lastChunks = $messageStreamer->getLastChunks();
+		$mode = isset( $debugMatches[2] ) ? strtolower( trim( $debugMatches[2] ) ) : 'normal';
+
+		if ( $mode === 'json' ) {
+			echo json_encode(
+				array(
+					'tokens' => $lastTokens,
+					'chunks' => $lastChunks,
+				),
+				JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES
+			) . "\n";
+		} elseif ( $mode === 'save' ) {
+			if ( empty( $lastChunks ) ) {
+				echo "\033[31mNo chunks available to save\033[m\n";
+				continue;
+			}
+
+			echo "Enter basename for test fixture (e.g., 'my-test' will create tests/fixtures/input/my-test.json): ";
+			$basename = trim( fgets( STDIN ) );
+
+			if ( empty( $basename ) ) {
+				echo "\033[31mCancelled\033[m\n";
+				continue;
+			}
+
+			// Remove .json extension if provided
+			if ( substr( $basename, -5 ) === '.json' ) {
+				$basename = substr( $basename, 0, -5 );
+			}
+
+			$inputFixturePath = __DIR__ . '/tests/fixtures/input/' . $basename . '.json';
+			$expectedFixturePath = __DIR__ . '/tests/fixtures/expected/' . $basename . '-output.txt';
+
+			// Check if file exists
+			if ( file_exists( $inputFixturePath ) ) {
+				echo "\033[33mFile already exists. Overwrite? (y/n): \033[m";
+				$confirm = trim( fgets( STDIN ) );
+				if ( strtolower( $confirm ) !== 'y' && strtolower( $confirm ) !== 'yes' ) {
+					echo "\033[31mCancelled\033[m\n";
+					continue;
+				}
+			}
+
+			// Write the chunks as JSON array (input fixture)
+			$json = json_encode( $lastChunks, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE );
+			if ( file_put_contents( $inputFixturePath, $json ) === false ) {
+				echo "\033[31mError: Failed to write input fixture\033[m\n";
+				continue;
+			}
+
+			// Generate the expected output by running the chunks through the streamer
+			$testStreamer = new MessageStreamer( false );
+			iterator_to_array( $testStreamer->outputMessage( '' ) );
+			$testStreamer->clearChunks();
+
+			$expectedOutput = '';
+			foreach ( $lastChunks as $chunk ) {
+				$result = iterator_to_array( $testStreamer->outputMessage( $chunk ) );
+				$expectedOutput .= implode( '', $result );
+			}
+
+			// Write the expected output
+			if ( file_put_contents( $expectedFixturePath, $expectedOutput ) === false ) {
+				echo "\033[31mError: Failed to write expected output fixture\033[m\n";
+				continue;
+			}
+
+			// Generate test method name
+			$testMethodName = 'test' . str_replace( ' ', '', ucwords( str_replace( array( '-', '_' ), ' ', $basename ) ) );
+
+			// Add test method to MessageStreamerTest.php
+			$testFile = __DIR__ . '/tests/MessageStreamerTest.php';
+			$testContent = file_get_contents( $testFile );
+
+			// Check if test already exists
+			if ( strpos( $testContent, "public function {$testMethodName}()" ) !== false ) {
+				echo "\033[33mTest method {$testMethodName} already exists in MessageStreamerTest.php\033[m\n";
+			} else {
+				// Find the position to insert (before the closing brace)
+				$insertPos = strrpos( $testContent, '}' );
+				if ( $insertPos !== false ) {
+					$newTestMethod = "\n\tpublic function {$testMethodName}() {\n";
+					$newTestMethod .= "\t\t// Load token stream from fixture\n";
+					$newTestMethod .= "\t\t\$tokens = json_decode( file_get_contents( __DIR__ . '/fixtures/input/{$basename}.json' ), true );\n\n";
+					$newTestMethod .= "\t\t// Clear any existing state\n";
+					$newTestMethod .= "\t\titerator_to_array( \$this->streamer->outputMessage( '' ) );\n";
+					$newTestMethod .= "\t\t\$this->streamer->clearChunks();\n\n";
+					$newTestMethod .= "\t\t// Process each token individually to simulate streaming\n";
+					$newTestMethod .= "\t\t\$output = '';\n";
+					$newTestMethod .= "\t\tforeach ( \$tokens as \$token ) {\n";
+					$newTestMethod .= "\t\t\t\$result = iterator_to_array( \$this->streamer->outputMessage( \$token ) );\n";
+					$newTestMethod .= "\t\t\t\$output .= implode( '', \$result );\n";
+					$newTestMethod .= "\t\t}\n\n";
+					$newTestMethod .= "\t\t// Compare output against fixture\n";
+					$newTestMethod .= "\t\t\$this->assertStringEqualsFileOrWrite( __DIR__ . '/fixtures/expected/{$basename}-output.txt', \$output );\n";
+					$newTestMethod .= "\t}\n";
+
+					$newContent = substr( $testContent, 0, $insertPos ) . $newTestMethod . '}';
+					file_put_contents( $testFile, $newContent );
+					echo "\033[32m✓ Added test method {$testMethodName} to MessageStreamerTest.php\033[m\n";
+				}
+			}
+
+			echo "\033[32m✓ Saved test fixtures:\033[m\n";
+			echo "  Input:    {$inputFixturePath} (" . count( $lastChunks ) . " chunks)\n";
+			echo "  Expected: {$expectedFixturePath}\n";
+			echo "\n\033[33mNext steps:\033[m\n";
+			echo "  1. Review and edit the expected output: {$expectedFixturePath}\n";
+			echo "  2. Run tests: \033[1mcomposer test -- --filter {$testMethodName}\033[m\n";
+		} else {
+			echo "\n\033[1m─── Debug Info ───\033[m\n";
+
+			if ( ! empty( $lastTokens ) ) {
+				echo "\n\033[1mTokens:\033[m\n";
+				foreach ( $lastTokens as $type => $count ) {
+					$type_label = str_replace( '_tokens', '', $type );
+					if ( is_numeric( $count ) && $type !== 'total' ) {
+						echo "  {$type_label}: {$count}\n";
+					}
+				}
+			} else {
+				echo "  No token data available\n";
+			}
+
+			if ( ! empty( $lastChunks ) ) {
+				echo "\n\033[1mChunks (" . count( $lastChunks ) . " total):\033[m\n";
+				foreach ( $lastChunks as $i => $chunk ) {
+					$preview = substr( $chunk, 0, 60 );
+					if ( strlen( $chunk ) > 60 ) {
+						$preview .= '...';
+					}
+					$preview = str_replace( "\n", '\\n', $preview );
+					echo sprintf( "  %3d: %s\n", $i + 1, $preview );
+				}
+			} else {
+				echo "  No chunks available\n";
+			}
+
+			echo "\n\033[90mTip: Use 'debug json' for JSON output or 'debug save' to create a test fixture\033[m\n";
+			echo "\n";
+		}
+		continue;
+	}
+
 	if ( false === $input || in_array( strtolower( trim( $input ) ), array( 'quit', 'exit', 'bye' ) ) ) {
 		break;
 	}
 
+	// Check for models command
+	if ( in_array( strtolower( trim( $input ) ), array( 'models', ':models', '/models' ) ) ) {
+		// Get default models
+		$defaultOnline = null;
+		$defaultOffline = null;
+		if ( $logStorage && method_exists( $logStorage, 'getDefaultModel' ) ) {
+			$defaultOnline = $logStorage->getDefaultModel( false );
+			$defaultOffline = $logStorage->getDefaultModel( true );
+		}
+
+		// Infer defaults if not set
+		if ( ! $defaultOnline ) {
+			foreach ( $supported_models as $m => $p ) {
+				if ( $p !== 'Ollama' ) {
+					$defaultOnline = $m;
+					break;
+				}
+			}
+		}
+		if ( ! $defaultOffline ) {
+			foreach ( $supported_models as $m => $p ) {
+				if ( $p === 'Ollama' ) {
+					$defaultOffline = $m;
+					break;
+				}
+			}
+		}
+
+		echo "\n\033[1mAvailable Models:\033[m\n";
+		foreach ( $supported_models_by_provider as $provider => $groups ) {
+			echo "\n\033[1m{$provider}:\033[m\n";
+			foreach ( $groups as $group => $models ) {
+				$count = count( $models );
+				$firstModel = $models[0];
+
+				// Collect markers for the first model in group
+				$markers = array();
+				if ( $firstModel === $model ) {
+					$markers[] = "\033[32mcurrent\033[m";
+				}
+				if ( $firstModel === $defaultOnline ) {
+					$markers[] = "\033[36mdefault online\033[m";
+				}
+				if ( $firstModel === $defaultOffline ) {
+					$markers[] = "\033[36mdefault offline\033[m";
+				}
+				$marker_str = ! empty( $markers ) ? ' (' . implode( ', ', $markers ) . ')' : '';
+
+				if ( $count === 1 ) {
+					echo "  - {$firstModel}{$marker_str}\n";
+				} else {
+					echo "  - {$group}: {$firstModel}{$marker_str}";
+					echo " \033[90m(+{$count} variants)\033[m\n";
+				}
+			}
+		}
+		echo "\n\033[90mTip: Use 'switch <model>' to switch models\033[m\n";
+		echo "\n";
+		continue;
+	}
+
+	// Check for update models command
+	if ( in_array( strtolower( trim( $input ) ), array( 'update', ':update', '/update' ) ) ) {
+		echo "Updating models from APIs...\n";
+		$counts = $apiClient->updateModelsFromApis();
+
+		// Reload models
+		$supported_models = $apiClient->getSupportedModels();
+		$autocomplete_models = array_keys( $supported_models );
+
+		echo "\033[32m✓ Models and pricing updated successfully\033[m\n";
+		foreach ( $counts as $provider => $count ) {
+			if ( $count > 0 ) {
+				echo "  {$provider}: {$count} models\n";
+			}
+		}
+		continue;
+	}
+
+	// Check for switch model command
+	$potentialModelInput = null;
+	if ( preg_match( '/^(?:use|:use|\/use)\s+(.+)$/i', trim( $input ), $matches ) ) {
+		$potentialModelInput = trim( $matches[1] );
+	} elseif ( isset( $supported_models[ trim( $input ) ] ) ) {
+		// Allow switching by just typing the model name
+		$potentialModelInput = trim( $input );
+	}
+
+	if ( $potentialModelInput !== null ) {
+		$newModel = $potentialModelInput;
+
+		// If not found directly, try finding a match
+		if ( ! isset( $supported_models[ $newModel ] ) ) {
+			// Try adding dash after gpt (e.g., "gpt4o" -> "gpt-4o")
+			$normalized = preg_replace( '/^(gpt)(\d)/', '$1-$2', $newModel );
+			if ( isset( $supported_models[ $normalized ] ) ) {
+				$newModel = $normalized;
+			} else {
+				// Try partial match (e.g., "o1" matches "o1-2024-12-17" or "o1-mini")
+				$matches = array();
+				foreach ( array_keys( $supported_models ) as $modelName ) {
+					if ( strpos( $modelName, $newModel ) === 0 ) {
+						$matches[] = $modelName;
+					}
+				}
+
+				if ( count( $matches ) === 1 ) {
+					$newModel = $matches[0];
+				} elseif ( count( $matches ) > 1 ) {
+					echo "\033[33mAmbiguous model '{$potentialModelInput}'. Did you mean:\033[m\n";
+					foreach ( array_slice( $matches, 0, 10 ) as $match ) {
+						echo "  - {$match}\n";
+					}
+					continue;
+				}
+			}
+		}
+
+		if ( ! isset( $supported_models[ $newModel ] ) ) {
+			echo "\033[31mError: Model '{$potentialModelInput}' not found. Type 'models' to see available models.\033[m\n";
+			continue;
+		}
+
+		$model = $newModel;
+		$model_provider = $supported_models[ $model ];
+		echo "\033[32mSwitched to model '{$model}' ({$model_provider})\033[m\n";
+		continue;
+	}
+
+	// Check for system prompt command
+	if ( preg_match( '/^(?:system|:system|\/system)(?:\s+(.+))?$/i', trim( $input ), $matches ) ) {
+		if ( isset( $matches[1] ) && ! empty( trim( $matches[1] ) ) ) {
+			// Set new system prompt
+			$system = trim( $matches[1] );
+			$system_prompt_name = null;
+			echo "\033[32mSystem prompt set to: \033[m\"{$system}\"\n";
+		} else {
+			// Show current system prompt
+			if ( $system ) {
+				echo "\033[1mCurrent system prompt:\033[m\n{$system}\n";
+			} else {
+				echo "\033[90mNo system prompt set\033[m\n";
+			}
+		}
+		continue;
+	}
+
+	// Check for default command (sets current model as default)
+	if ( preg_match( '/^(?:default|:default|\/default)$/i', trim( $input ) ) ) {
+		$modelProvider = $supported_models[ $model ];
+		$modelIsOffline = ( $modelProvider === 'Ollama' );
+
+		if ( $logStorage && method_exists( $logStorage, 'setDefaultModel' ) ) {
+			$logStorage->setDefaultModel( $model, $modelIsOffline );
+			$modeLabel = $modelIsOffline ? 'offline' : 'online';
+			echo "\033[32mSet '{$model}' as default {$modeLabel} model.\033[m\n";
+		} else {
+			echo "\033[31mError: Cannot set default model (storage not available).\033[m\n";
+		}
+		continue;
+	}
+
+	// Check for help command
+	if ( in_array( strtolower( trim( $input ) ), array( 'help', ':help', '/help', '?' ) ) ) {
+		echo "\n\033[1mAvailable Commands:\033[m\n";
+		echo "  \033[1mmodels\033[m               List all available models\n";
+		echo "  \033[1mupdate\033[m               Update models and pricing from APIs\n";
+		echo "  \033[1muse <model>\033[m          Switch to a different model for this conversation\n";
+		echo "  \033[1mdefault\033[m              Set current model as default (offline/online auto-detected)\n";
+		echo "  \033[1msystem [text]\033[m        View or set system prompt\n";
+		echo "  \033[1mt\033[m                    View thought process from last response\n";
+		echo "  \033[1mdebug [json|save]\033[m    View token usage and chunks ('json' for JSON, 'save' to create test fixture)\n";
+		echo "  \033[1mw, webui\033[m             Open web UI in browser\n";
+		echo "  \033[1mhelp, ?\033[m              Show this help message\n";
+		echo "  \033[1mquit, exit, bye\033[m      Exit the program\n";
+		echo "\n\033[1mInput Modes:\033[m\n";
+		echo "  Empty line or \033[1m.\033[m      Start multiline input\n";
+		echo "  Line ending with \033[1m:\033[m   Continue multiline input\n";
+		echo "\n";
+		continue;
+	}
+
 	// Check for webui switch command
-	if ( in_array( strtolower( trim( $input ) ), array( 'webui', ':webui', '/webui' ) ) ) {
+	if ( in_array( strtolower( trim( $input ) ), array( 'w', 'webui', ':webui', '/webui' ) ) ) {
 		$port = 8381; // default port
 		$host = 'localhost';
 		$url = "http://{$host}:{$port}";
@@ -858,6 +1208,19 @@ while ( true ) {
 		$multiline = $input . PHP_EOL;
 		echo 'Continuing multiline input. End with the last message as just a dot.', PHP_EOL;
 		continue;
+	}
+
+	// Check for single-word input that isn't a known command or common word
+	$trimmedInput = trim( $input );
+	$wordCount = str_word_count( $trimmedInput );
+	$commonWords = array( 'yes', 'no', 'ok', 'okay', 'sure', 'thanks', 'please', 'why', 'how', 'what', 'when', 'where', 'who' );
+
+	if ( $wordCount === 1 && ! in_array( strtolower( $trimmedInput ), $commonWords ) ) {
+		echo "\033[33mSend single word '{$trimmedInput}' to the LLM? (y/n): \033[m";
+		$confirm = trim( fgets( STDIN ) );
+		if ( strtolower( $confirm ) !== 'y' && strtolower( $confirm ) !== 'yes' ) {
+			continue;
+		}
 	}
 
 	readline_add_history( $input );
@@ -1067,8 +1430,10 @@ while ( true ) {
 		echo PHP_EOL;
 	}
 	$message = '';
+	$thinking = ''; // Reset thinking for new message
+	$messageStreamer->resetThinking();
 
-	curl_setopt( $ch, CURLOPT_WRITEFUNCTION, $messageStreamer->createCurlWriteHandler( $message, $chunk_overflow, $usage, $model_provider ) );
+	curl_setopt( $ch, CURLOPT_WRITEFUNCTION, $messageStreamer->createCurlWriteHandler( $message, $chunk_overflow, $usage, $model_provider, $thinking ) );
 
 	$api_start_time = microtime( true );
 	$output = curl_exec( $ch );
@@ -1081,8 +1446,25 @@ while ( true ) {
 		echo 'CURL Error: ', curl_error( $ch ), PHP_EOL;
 		exit( 1 );
 	}
+
 	if ( $ansi || isset( $options['v'] ) ) {
 		echo PHP_EOL;
+	}
+
+	// Show hint after response completes
+	$hints = array();
+	if ( ! empty( $thinking ) && ! isset( $options['t'] ) && ! isset( $options['show-thinking'] ) ) {
+		$hints[] = "'t' to view thought process";
+	}
+	$hints[] = "'w' to open web UI";
+
+	if ( ! empty( $hints ) ) {
+		$hint_text = '(Type ' . implode( ', ', $hints ) . ')';
+		if ( $ansi ) {
+			echo "\033[90m{$hint_text}\033[m" . PHP_EOL;
+		} else {
+			echo $hint_text . PHP_EOL;
+		}
 	}
 	$messages[] = array(
 		'role'    => 'assistant',
@@ -1116,7 +1498,7 @@ while ( true ) {
 	}
 	if ( $stdin || ltrim( $input ) === $input ) {
 		// Persist history unless prepended by whitespace.
-		$logStorage->writeAssistantMessage( $conversation_id, $message );
+		$logStorage->writeAssistantMessage( $conversation_id, $message, null, ! empty( $thinking ) ? $thinking : null );
 	}
 
 	// Accumulate token usage and update cost after each API response
@@ -1159,6 +1541,9 @@ while ( true ) {
 				$logStorage->storeCostData( $conversation_id, $current_cost, $current_input_tokens, $current_output_tokens );
 			}
 		}
+
+		// Always store tokens for debugging
+		$messageStreamer->storeTokens( $usage );
 	}
 
 	if ( isset( $options['v'] ) && $messageStreamer ) {

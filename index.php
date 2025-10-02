@@ -11,7 +11,7 @@ if ( ! file_exists( $dbPath ) ) {
 
 $storage = new SQLiteLogStorage( $dbPath );
 $parsedown = new ParsedownMath();
-$apiClient = new ApiClient();
+$apiClient = new ApiClient( $storage );
 
 $action = $_GET['action'] ?? 'list';
 $conversationId = $_GET['id'] ?? null;
@@ -61,7 +61,7 @@ if ( isset( $_GET['api'] ) && $_GET['api'] === 'config' ) {
 
 	if ( isset( $ollamaModels['models'] ) ) {
 		foreach ( $ollamaModels['models'] as $m ) {
-			$supportedModels[ $m['name'] ] = 'Ollama (local)';
+			$supportedModels[ $m['name'] ] = 'Ollama';
 		}
 	}
 
@@ -109,9 +109,10 @@ if ( $_SERVER['REQUEST_METHOD'] === 'POST' && isset( $_GET['api'] ) && $_GET['ap
 	$message = $input['message'];
 	$model = $input['model'] ?? '';
 	$usage = $input['usage'] ?? array();
+	$thinking = $input['thinking'] ?? null;
 
 	// Store the message
-	$storage->writeAssistantMessage( $conversationId, $message );
+	$storage->writeAssistantMessage( $conversationId, $message, null, $thinking );
 
 	// Calculate and store cost if usage data is provided
 	if ( ! empty( $usage ) && $model ) {
@@ -559,6 +560,64 @@ function renderConversationItem( $storage, $id ) {
         }
         .message.system button.display-markdown { display: none; }
         .message.system.show button.display-markdown { display: block; }
+		.thinking-container {
+			background: #fff9e6;
+			border: 1px solid #f0e6cc;
+			border-radius: 6px;
+			margin: 15px 0;
+			overflow: hidden;
+			transition: all 0.3s ease;
+		}
+		.thinking-header {
+			padding: 10px 15px;
+			background: #fef6e6;
+			border-bottom: 1px solid #f0e6cc;
+			cursor: pointer;
+			display: flex;
+			justify-content: space-between;
+			align-items: center;
+			font-weight: 500;
+			color: #856404;
+		}
+		.thinking-header:hover {
+			background: #fdecc8;
+		}
+		.thinking-icon {
+			transition: transform 0.3s ease;
+		}
+		.thinking-container.collapsed .thinking-icon {
+			transform: rotate(-90deg);
+		}
+		.thinking-content {
+			padding: 15px;
+			color: #856404;
+			font-size: 0.9em;
+			line-height: 1.6;
+			white-space: pre-wrap;
+			max-height: 400px;
+			overflow-y: auto;
+		}
+		.thinking-container.collapsed .thinking-content {
+			display: none;
+		}
+		.thinking-spinner {
+			display: inline-block;
+			animation: spin 1s linear infinite;
+			margin-left: 8px;
+		}
+		@keyframes spin {
+			0% { content: '⠋'; }
+			10% { content: '⠙'; }
+			20% { content: '⠹'; }
+			30% { content: '⠸'; }
+			40% { content: '⠼'; }
+			50% { content: '⠴'; }
+			60% { content: '⠦'; }
+			70% { content: '⠧'; }
+			80% { content: '⠇'; }
+			90% { content: '⠏'; }
+			100% { content: '⠋'; }
+		}
 		.message-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
 		.message-role { font-weight: bold; text-transform: capitalize; }
 		.message-timestamp { font-size: 0.8em; color: #666; }
@@ -792,11 +851,13 @@ function renderConversationItem( $storage, $id ) {
 							$content = $message['content'];
 							$timestamp = $message['timestamp'];
 							$role = $message['role'];
+							$thinking = $message['thinking'] ?? null;
 						} else {
 							// Fallback for old format
 							$content = $message;
 							$timestamp = null;
 							$role = 'unknown';
+							$thinking = null;
 						}
 
 						// Add branch zone if previous message was assistant and current is user
@@ -817,6 +878,19 @@ function renderConversationItem( $storage, $id ) {
 						// Regular message - no special handling needed
 						$displayRole = $role;
 						$isSystemMessage = ( $role === 'system' );
+
+						// Display thinking before assistant message if it exists
+						if ( $thinking && $role === 'assistant' ) :
+							?>
+							<div class="thinking-container collapsed">
+								<div class="thinking-header" onclick="toggleThinking(this)">
+									<span class="thinking-icon">💭</span>
+									<span class="thinking-label">Thought Process</span>
+								</div>
+								<div class="thinking-content"><?php echo htmlspecialchars( $thinking ); ?></div>
+							</div>
+							<?php
+						endif;
 						?>
 						<div class="message <?php echo htmlspecialchars( $displayRole ); ?>">
 							<div class="message-header">
@@ -996,7 +1070,7 @@ function renderConversationItem( $storage, $id ) {
 							document.getElementById('api-not-available').style.display = 'block';
 							return;
 						}
-						// Ollama (local) doesn't need API keys, so it's always available if the model is supported
+						// Ollama doesn't need API keys, so it's always available if the model is supported
 
 						// Enable send button when API is ready
 						document.getElementById('send-message').disabled = false;
@@ -1054,6 +1128,10 @@ function renderConversationItem( $storage, $id ) {
 					const provider = chatConfig.supported_models[currentModel];
 					console.log('Current model:', currentModel, 'Provider:', provider, 'Config:', chatConfig);
 					let apiUrl, headers, requestBody;
+					let thinkingDiv = null;
+					let thinkingContent = '';
+					let tagBuffer = '';
+					let inThinkingTag = false;
 
 					if (provider === 'OpenAI') {
 						apiUrl = 'https://api.openai.com/v1/chat/completions';
@@ -1090,7 +1168,7 @@ function renderConversationItem( $storage, $id ) {
 						if (systemPrompt) {
 							requestBody.system = systemPrompt;
 						}
-					} else if (provider === 'Ollama (local)') {
+					} else if (provider === 'Ollama') {
 						apiUrl = 'http://localhost:11434/v1/chat/completions';
 						headers = {
 							'Content-Type': 'application/json'
@@ -1154,7 +1232,7 @@ function renderConversationItem( $storage, $id ) {
 							buffer += decoder.decode(value, { stream: true });
 
 							// Handle different response formats based on provider
-							if (provider === 'OpenAI' || provider === 'Ollama (local)') {
+							if (provider === 'OpenAI' || provider === 'Ollama') {
 								// OpenAI/Ollama use Server-Sent Events format
 								const lines = buffer.split('\n');
 								buffer = lines.pop() || '';
@@ -1169,11 +1247,46 @@ function renderConversationItem( $storage, $id ) {
 
 										try {
 											const parsed = JSON.parse(data);
-											if (parsed.choices?.[0]?.delta?.content) {
-												const delta = parsed.choices[0].delta.content;
-												assistantMessage += delta;
-												assistantMessageDiv.querySelector('.message-content').innerHTML =
-													(typeof marked !== 'undefined') ? marked.parse(assistantMessage) : assistantMessage;
+											// Check for reasoning content (o1/o3 models)
+											if (parsed.choices?.[0]?.delta?.reasoning_content) {
+												if (!thinkingDiv) {
+													thinkingDiv = createThinkingContainer();
+													assistantMessageDiv.parentNode.insertBefore(thinkingDiv, assistantMessageDiv);
+												}
+												const delta = parsed.choices[0].delta.reasoning_content;
+												thinkingContent += delta;
+												thinkingDiv.querySelector('.thinking-content').textContent = thinkingContent;
+											} else if (parsed.choices?.[0]?.delta?.content) {
+												let delta = parsed.choices[0].delta.content;
+
+												// For Ollama, process <think> tags
+												if (provider === 'Ollama') {
+													const state = {
+														tagBuffer: tagBuffer,
+														inThinking: inThinkingTag,
+														thinkingDiv: thinkingDiv,
+														thinkingContent: thinkingContent,
+														assistantMessageDiv: assistantMessageDiv
+													};
+													delta = processThinkTags(delta, state);
+													tagBuffer = state.tagBuffer;
+													inThinkingTag = state.inThinking;
+													thinkingDiv = state.thinkingDiv;
+													thinkingContent = state.thinkingContent;
+												} else {
+													// Close thinking if it was open (for non-Ollama)
+													if (thinkingDiv) {
+														closeThinkingContainer(thinkingDiv);
+														thinkingDiv = null;
+													}
+												}
+
+												// Only update message if there's content to show
+												if (delta) {
+													assistantMessage += delta;
+													assistantMessageDiv.querySelector('.message-content').innerHTML =
+														(typeof marked !== 'undefined') ? marked.parse(assistantMessage) : assistantMessage;
+												}
 											}
 											if (parsed.usage) {
 												usage = parsed.usage;
@@ -1201,7 +1314,22 @@ function renderConversationItem( $storage, $id ) {
 
 									try {
 										const parsed = JSON.parse(jsonData);
-										if (parsed.type === 'content_block_delta') {
+										// Handle thinking content blocks
+										if (parsed.type === 'content_block_start' && parsed.content_block?.type === 'thinking') {
+											if (!thinkingDiv) {
+												thinkingDiv = createThinkingContainer();
+												assistantMessageDiv.parentNode.insertBefore(thinkingDiv, assistantMessageDiv);
+											}
+										} else if (parsed.type === 'content_block_delta' && parsed.delta?.type === 'thinking_delta') {
+											const delta = parsed.delta?.thinking || '';
+											thinkingContent += delta;
+											if (thinkingDiv) {
+												thinkingDiv.querySelector('.thinking-content').textContent = thinkingContent;
+											}
+										} else if (parsed.type === 'content_block_stop' && thinkingDiv) {
+											closeThinkingContainer(thinkingDiv);
+											thinkingDiv = null;
+										} else if (parsed.type === 'content_block_delta') {
 											const delta = parsed.delta?.text || '';
 											assistantMessage += delta;
 											assistantMessageDiv.querySelector('.message-content').innerHTML =
@@ -1231,7 +1359,8 @@ function renderConversationItem( $storage, $id ) {
 								conversationId: currentConversationId,
 								message: assistantMessage,
 								model: currentModel,
-								usage: usage
+								usage: usage,
+								thinking: thinkingContent || null
 							})
 						});
 
@@ -1257,6 +1386,89 @@ function renderConversationItem( $storage, $id ) {
 					}
 
 					sendButton.disabled = false;
+				}
+
+				function processThinkTags(content, state) {
+					// Process <think> tags for Ollama models
+					state.tagBuffer += content;
+					let output = '';
+
+					// Check for <think> opening tag
+					if (!state.inThinking && state.tagBuffer.includes('<think>')) {
+						const parts = state.tagBuffer.split('<think>', 2);
+						output += parts[0]; // Content before <think>
+						state.tagBuffer = parts[1] || '';
+						state.inThinking = true;
+
+						// Create thinking container if needed
+						if (!state.thinkingDiv) {
+							state.thinkingDiv = createThinkingContainer();
+							state.assistantMessageDiv.parentNode.insertBefore(state.thinkingDiv, state.assistantMessageDiv);
+						}
+					}
+
+					// Check for </think> closing tag
+					if (state.inThinking && state.tagBuffer.includes('</think>')) {
+						const parts = state.tagBuffer.split('</think>', 2);
+						const thinkingText = parts[0];
+						if (state.thinkingDiv) {
+							state.thinkingDiv.querySelector('.thinking-content').textContent += thinkingText;
+						}
+						state.thinkingContent += thinkingText;
+						state.inThinking = false;
+						state.tagBuffer = parts[1] || '';
+						output += state.tagBuffer;
+						state.tagBuffer = '';
+
+						// Close thinking container
+						if (state.thinkingDiv) {
+							closeThinkingContainer(state.thinkingDiv);
+						}
+					} else if (state.inThinking) {
+						// We're in thinking mode, accumulate content
+						// Keep last 10 chars in buffer in case of split tag
+						if (state.tagBuffer.length > 10) {
+							const thinkingText = state.tagBuffer.slice(0, -10);
+							if (state.thinkingDiv) {
+								state.thinkingDiv.querySelector('.thinking-content').textContent += thinkingText;
+							}
+							state.thinkingContent += thinkingText;
+							state.tagBuffer = state.tagBuffer.slice(-10);
+						}
+					} else {
+						// Not in thinking mode
+						// Keep last 10 chars in buffer in case of split <think> tag
+						if (state.tagBuffer.length > 10) {
+							output += state.tagBuffer.slice(0, -10);
+							state.tagBuffer = state.tagBuffer.slice(-10);
+						}
+					}
+
+					return output;
+				}
+
+				function createThinkingContainer() {
+					const container = document.createElement('div');
+					container.className = 'thinking-container';
+					container.innerHTML = `
+						<div class="thinking-header" onclick="toggleThinking(this)">
+							<span>💭 Thinking...</span>
+							<span class="thinking-icon">▼</span>
+						</div>
+						<div class="thinking-content"></div>
+					`;
+					return container;
+				}
+
+				function closeThinkingContainer(container) {
+					const header = container.querySelector('.thinking-header span:first-child');
+					header.textContent = '💭 Thinking';
+					container.classList.add('collapsed');
+				}
+
+				function toggleThinking(header) {
+					const container = header.closest('.thinking-container');
+					container.classList.toggle('collapsed');
 				}
 
 				function appendMessage(role, content) {

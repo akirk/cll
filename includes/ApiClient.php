@@ -5,24 +5,26 @@ class ApiClient {
 	private $anthropicKey;
 	private $supportedModels;
 	private $ch;
+	private $logStorage;
 
-	public function __construct() {
+	public function __construct( $logStorage = null ) {
 		$this->openaiKey = getenv( 'OPENAI_API_KEY', true );
 		$this->anthropicKey = getenv( 'ANTHROPIC_API_KEY', true );
+		$this->logStorage = $logStorage;
 		$this->loadSupportedModels();
 		$this->loadOllamaModels();
 		$this->initializeCurl();
 	}
 
 	private function loadSupportedModels() {
-		$supportedModelsFile = __DIR__ . '/../supported-models.json';
-		if ( file_exists( $supportedModelsFile ) ) {
-			$this->supportedModels = json_decode( file_get_contents( $supportedModelsFile ), true );
-			if ( ! is_array( $this->supportedModels ) ) {
-				$this->supportedModels = array();
+		$this->supportedModels = array();
+
+		// Load from SQLite
+		if ( $this->logStorage && method_exists( $this->logStorage, 'getModels' ) ) {
+			$models = $this->logStorage->getModels();
+			foreach ( $models as $modelData ) {
+				$this->supportedModels[ $modelData['model'] ] = $modelData['provider'];
 			}
-		} else {
-			$this->supportedModels = array();
 		}
 	}
 
@@ -39,7 +41,13 @@ class ApiClient {
 			$ollama_models = json_decode( $response, true );
 			if ( isset( $ollama_models['models'] ) ) {
 				foreach ( $ollama_models['models'] as $m ) {
-					$this->supportedModels[ $m['name'] ] = 'Ollama (local)';
+					$modelName = $m['name'];
+					$this->supportedModels[ $modelName ] = 'Ollama';
+
+					// Cache in SQLite if available
+					if ( $this->logStorage && method_exists( $this->logStorage, 'upsertModel' ) ) {
+						$this->logStorage->upsertModel( $modelName, 'Ollama', true );
+					}
 				}
 			}
 		}
@@ -65,7 +73,7 @@ class ApiClient {
 				return ! empty( $this->openaiKey );
 			case 'Anthropic':
 				return ! empty( $this->anthropicKey );
-			case 'Ollama (local)':
+			case 'Ollama':
 				return true; // Always available locally
 			default:
 				return false;
@@ -128,12 +136,34 @@ class ApiClient {
 		// Provider-specific configurations
 		if ( $provider === 'Anthropic' ) {
 			$wrapper['max_tokens'] = 3200;
+
+			// Enable thinking for Claude models that support it
+			// Claude 3.7 Sonnet and later support extended thinking
+			if ( strpos( $model, 'claude-3-7' ) !== false ||
+			     strpos( $model, 'claude-3-opus' ) !== false ||
+			     strpos( $model, 'claude-3-5-sonnet' ) !== false ) {
+				$wrapper['thinking'] = array(
+					'type' => 'enabled',
+					'budget_tokens' => 10000
+				);
+			}
 		}
 
 		if ( $provider === 'OpenAI' ) {
 			$wrapper['stream_options'] = array(
 				'include_usage' => true,
 			);
+
+			// For o1/o3 reasoning models, set reasoning_effort if available
+			if ( strpos( $model, 'o1' ) !== false || strpos( $model, 'o3' ) !== false ) {
+				// o1/o3 models automatically provide reasoning, no special config needed
+				// The reasoning_content will be in the delta
+			}
+		}
+
+		// Ollama also supports thinking through their OpenAI-compatible API
+		if ( $provider === 'Ollama (local)' ) {
+			// Some Ollama models support thinking, it will be detected in the response
 		}
 
 		return array(
@@ -149,7 +179,7 @@ class ApiClient {
 				return 'https://api.openai.com/v1/chat/completions';
 			case 'Anthropic':
 				return 'https://api.anthropic.com/v1/messages';
-			case 'Ollama (local)':
+			case 'Ollama':
 				return 'http://localhost:11434/v1/chat/completions';
 			default:
 				throw new Exception( "Unknown provider: {$provider}" );
@@ -170,7 +200,7 @@ class ApiClient {
 				$headers[] = 'x-api-key: ' . $this->anthropicKey;
 				$headers[] = 'anthropic-version: 2023-06-01';
 				break;
-			case 'Ollama (local)':
+			case 'Ollama':
 				// No authentication needed for local Ollama
 				break;
 		}
@@ -179,36 +209,15 @@ class ApiClient {
 	}
 
 	public function calculateCost( $model, $inputTokens, $outputTokens, $cacheReadTokens = 0, $cacheWriteTokens = 0 ) {
-		static $pricingData = null;
-
-		// Load pricing data once
-		if ( $pricingData === null ) {
-			$pricingFile = __DIR__ . '/../pricing.json';
-			if ( file_exists( $pricingFile ) ) {
-				$pricingJson = file_get_contents( $pricingFile );
-				$pricingData = json_decode( $pricingJson, true );
-
-				if ( json_last_error() !== JSON_ERROR_NONE ) {
-					error_log( 'Invalid pricing.json format: ' . json_last_error_msg() );
-					$pricingData = false;
-				}
-			} else {
-				error_log( 'pricing.json file not found: ' . $pricingFile );
-				$pricingData = false;
-			}
-		}
-
-		// Return 0 if pricing data couldn't be loaded
-		if ( ! $pricingData || ! isset( $pricingData['models'] ) ) {
-			return 0;
-		}
-
-		// Find the best matching pricing
+		// Get pricing from SQLite
 		$modelPricing = null;
-		foreach ( $pricingData['models'] as $priceModel => $prices ) {
-			if ( strpos( $model, $priceModel ) !== false ) {
-				$modelPricing = $prices;
-				break;
+		$perTokens = 1000000;
+
+		if ( $this->logStorage && method_exists( $this->logStorage, 'getModelPricing' ) ) {
+			$pricing = $this->logStorage->getModelPricing( $model );
+			if ( $pricing && $pricing['input_price'] !== null ) {
+				$modelPricing = $pricing;
+				$perTokens = $pricing['per_tokens'] ?? 1000000;
 			}
 		}
 
@@ -217,21 +226,95 @@ class ApiClient {
 			return 0;
 		}
 
-		$perTokens = $pricingData['per_tokens'] ?? 1000000;
-
 		$cost = 0;
-		$cost += ( $inputTokens / $perTokens ) * $modelPricing['input'];
-		$cost += ( $outputTokens / $perTokens ) * $modelPricing['output'];
+		$inputPrice = $modelPricing['input_price'] ?? $modelPricing['input'] ?? 0;
+		$outputPrice = $modelPricing['output_price'] ?? $modelPricing['output'] ?? 0;
+		$cacheReadPrice = $modelPricing['cache_read_price'] ?? $modelPricing['cache_read'] ?? null;
+		$cacheWritePrice = $modelPricing['cache_write_price'] ?? $modelPricing['cache_write'] ?? null;
 
-		if ( isset( $modelPricing['cache_read'] ) && $cacheReadTokens > 0 ) {
-			$cost += ( $cacheReadTokens / $perTokens ) * $modelPricing['cache_read'];
+		$cost += ( $inputTokens / $perTokens ) * $inputPrice;
+		$cost += ( $outputTokens / $perTokens ) * $outputPrice;
+
+		if ( $cacheReadPrice !== null && $cacheReadTokens > 0 ) {
+			$cost += ( $cacheReadTokens / $perTokens ) * $cacheReadPrice;
 		}
 
-		if ( isset( $modelPricing['cache_write'] ) && $cacheWriteTokens > 0 ) {
-			$cost += ( $cacheWriteTokens / $perTokens ) * $modelPricing['cache_write'];
+		if ( $cacheWritePrice !== null && $cacheWriteTokens > 0 ) {
+			$cost += ( $cacheWriteTokens / $perTokens ) * $cacheWritePrice;
 		}
 
 		return $cost;
+	}
+
+	public function updateModelsFromApis() {
+		if ( ! $this->logStorage || ! method_exists( $this->logStorage, 'upsertModel' ) ) {
+			return false;
+		}
+
+		$counts = array(
+			'OpenAI'    => 0,
+			'Anthropic' => 0,
+			'Ollama'    => 0,
+		);
+
+		// Update OpenAI models
+		if ( ! empty( $this->openaiKey ) ) {
+			$ch = curl_init();
+			curl_setopt( $ch, CURLOPT_URL, 'https://api.openai.com/v1/models' );
+			curl_setopt( $ch, CURLOPT_RETURNTRANSFER, 1 );
+			curl_setopt(
+				$ch,
+				CURLOPT_HTTPHEADER,
+				array(
+					'Content-Type: application/json',
+					'Authorization: Bearer ' . $this->openaiKey,
+				)
+			);
+			$response = curl_exec( $ch );
+			curl_close( $ch );
+
+			$data = json_decode( $response, true );
+			if ( isset( $data['data'] ) ) {
+				foreach ( $data['data'] as $model ) {
+					if ( preg_match( '/^(gpt-\d|o\d-)/', $model['id'] ) && false === strpos( $model['id'], 'preview' ) ) {
+						$this->logStorage->upsertModel( $model['id'], 'OpenAI', false );
+						$counts['OpenAI']++;
+					}
+				}
+			}
+		}
+
+		// Update Anthropic models (they don't have a models list API, so we'll add known models)
+		if ( ! empty( $this->anthropicKey ) ) {
+			$anthropicModels = array(
+				'claude-opus-4-1-20250805',
+				'claude-opus-4-20250514',
+				'claude-sonnet-4-20250514',
+				'claude-3-7-sonnet-20250219',
+				'claude-3-5-sonnet-20241022',
+				'claude-3-5-haiku-20241022',
+				'claude-3-5-sonnet-20240620',
+				'claude-3-haiku-20240307',
+				'claude-3-opus-20240229',
+			);
+			foreach ( $anthropicModels as $model ) {
+				$this->logStorage->upsertModel( $model, 'Anthropic', false );
+				$counts['Anthropic']++;
+			}
+		}
+
+		// Reload models after update
+		$this->loadSupportedModels();
+		$this->loadOllamaModels();
+
+		// Count Ollama models
+		foreach ( $this->supportedModels as $model => $provider ) {
+			if ( $provider === 'Ollama' ) {
+				$counts['Ollama']++;
+			}
+		}
+
+		return $counts;
 	}
 
 	public function __destruct() {

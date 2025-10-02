@@ -14,7 +14,7 @@ abstract class LogStorage {
 	abstract public function initializeConversation( $conversationId, $model, $createdAt = null );
 	abstract public function writeSystemPrompt( $conversationId, $systemPrompt, $promptName = null );
 	abstract public function writeUserMessage( $conversationId, $message, $createdAt = null );
-	abstract public function writeAssistantMessage( $conversationId, $message, $createdAt = null );
+	abstract public function writeAssistantMessage( $conversationId, $message, $createdAt = null, $thinking = null );
 	abstract public function loadConversation( $conversationId );
 	abstract public function findConversations( $limit = 10, $search = null, $tag = null, $offset = 0 );
 	abstract public function getConversationMetadata( $conversationId );
@@ -35,7 +35,7 @@ class NoLogStorage extends LogStorage {
 		// No-op implementation
 	}
 
-	public function writeAssistantMessage( $conversationId, $message, $createdAt = null ) {
+	public function writeAssistantMessage( $conversationId, $message, $createdAt = null, $thinking = null ) {
 		// No-op implementation
 	}
 
@@ -129,10 +129,33 @@ $this->db->exec(
         '
 );
 
+		$this->db->exec(
+			'
+			CREATE TABLE IF NOT EXISTS models (
+				model TEXT PRIMARY KEY,
+				provider TEXT NOT NULL,
+				is_offline INTEGER DEFAULT 0,
+				is_default INTEGER DEFAULT 0,
+				input_price REAL DEFAULT NULL,
+				output_price REAL DEFAULT NULL,
+				cache_read_price REAL DEFAULT NULL,
+				cache_write_price REAL DEFAULT NULL,
+				per_tokens INTEGER DEFAULT 1000000,
+				added_at INTEGER NOT NULL,
+				updated_at INTEGER NOT NULL
+			)
+		'
+		);
+
+		// Create unique partial index to enforce only one default per is_offline value
+		$this->db->exec( 'CREATE UNIQUE INDEX IF NOT EXISTS idx_models_default ON models(is_offline, is_default) WHERE is_default = 1' );
+
 		$this->db->exec( 'CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id)' );
 		$this->db->exec( 'CREATE INDEX IF NOT EXISTS idx_conversations_created ON conversations(created_at DESC)' );
 		$this->db->exec( 'CREATE INDEX IF NOT EXISTS idx_conversations_tags ON conversations(tags)' );
 		$this->db->exec( 'CREATE INDEX IF NOT EXISTS idx_system_prompts_name ON system_prompts(name)' );
+		$this->db->exec( 'CREATE INDEX IF NOT EXISTS idx_models_provider ON models(provider)' );
+		$this->db->exec( 'CREATE INDEX IF NOT EXISTS idx_models_offline ON models(is_offline)' );
 
 		// Add cost tracking columns if they don't exist (migration)
 		$columns = $this->db->query( "PRAGMA table_info(conversations)" )->fetchAll( PDO::FETCH_ASSOC );
@@ -149,6 +172,17 @@ $this->db->exec(
 		}
 		if ( ! in_array( 'output_tokens', $hasColumns ) ) {
 			$this->db->exec( 'ALTER TABLE conversations ADD COLUMN output_tokens INTEGER DEFAULT 0' );
+		}
+
+		// Add thinking column to messages table if it doesn't exist (migration)
+		$messageColumns = $this->db->query( "PRAGMA table_info(messages)" )->fetchAll( PDO::FETCH_ASSOC );
+		$hasMessageColumns = array();
+		foreach ( $messageColumns as $column ) {
+			$hasMessageColumns[] = $column['name'];
+		}
+
+		if ( ! in_array( 'thinking', $hasMessageColumns ) ) {
+			$this->db->exec( 'ALTER TABLE messages ADD COLUMN thinking TEXT DEFAULT NULL' );
 		}
 
 		// Insert default empty system prompt if none exists
@@ -209,20 +243,20 @@ $stmt = $this->db->prepare(
 		$this->writeMessage( $conversationId, 'user', $message, $createdAt );
 	}
 
-	public function writeAssistantMessage( $conversationId, $message, $createdAt = null ) {
-		$this->writeMessage( $conversationId, 'assistant', $message, $createdAt );
+	public function writeAssistantMessage( $conversationId, $message, $createdAt = null, $thinking = null ) {
+		$this->writeMessage( $conversationId, 'assistant', $message, $createdAt, $thinking );
 		$this->updateConversationTags( $conversationId );
 	}
 
-	private function writeMessage( $conversationId, $role, $content, $createdAt = null ) {
+	private function writeMessage( $conversationId, $role, $content, $createdAt = null, $thinking = null ) {
 		$createdAt = $createdAt ?: time();
 $stmt = $this->db->prepare(
     '
-            INSERT INTO messages (conversation_id, role, content, created_at) 
-            VALUES (?, ?, ?, ?)
+            INSERT INTO messages (conversation_id, role, content, created_at, thinking)
+            VALUES (?, ?, ?, ?, ?)
         '
 );
-		$stmt->execute( array( $conversationId, $role, $content, $createdAt ) );
+		$stmt->execute( array( $conversationId, $role, $content, $createdAt, $thinking ) );
 
 		// Update conversation timestamp
 $updateStmt = $this->db->prepare(
@@ -236,9 +270,9 @@ $updateStmt = $this->db->prepare(
 	public function loadConversation( $conversationId ) {
 $stmt = $this->db->prepare(
     '
-            SELECT role, content, created_at 
-            FROM messages 
-            WHERE conversation_id = ? 
+            SELECT role, content, created_at, thinking
+            FROM messages
+            WHERE conversation_id = ?
             ORDER BY created_at ASC
         '
 );
@@ -246,11 +280,15 @@ $stmt = $this->db->prepare(
 
 		$result = array();
 		while ( $row = $stmt->fetch( PDO::FETCH_ASSOC ) ) {
-			$result[] = array(
+			$message = array(
 				'content'   => $row['content'],
 				'timestamp' => $row['created_at'],
 				'role'      => $row['role'],
 			);
+			if ( ! empty( $row['thinking'] ) ) {
+				$message['thinking'] = $row['thinking'];
+			}
+			$result[] = $message;
 		}
 
 		return empty( $result ) ? null : $result;
@@ -775,6 +813,64 @@ $stmt = $this->db->prepare(
 			'UPDATE conversations SET cost = cost + ?, input_tokens = input_tokens + ?, output_tokens = output_tokens + ? WHERE id = ?'
 		);
 		return $stmt->execute( array( $cost, $inputTokens, $outputTokens, $conversationId ) );
+	}
+
+	// Model management methods
+	public function getModels( $isOffline = null ) {
+		if ( $isOffline === null ) {
+			$stmt = $this->db->prepare( 'SELECT * FROM models ORDER BY provider, model' );
+			$stmt->execute();
+		} else {
+			$stmt = $this->db->prepare( 'SELECT * FROM models WHERE is_offline = ? ORDER BY provider, model' );
+			$stmt->execute( array( $isOffline ? 1 : 0 ) );
+		}
+		return $stmt->fetchAll( PDO::FETCH_ASSOC );
+	}
+
+	public function getLastModelUpdate() {
+		$stmt = $this->db->prepare( 'SELECT MAX(updated_at) as last_update FROM models' );
+		$stmt->execute();
+		$result = $stmt->fetch( PDO::FETCH_ASSOC );
+		return $result['last_update'] ?? null;
+	}
+
+	public function getDefaultModel( $isOffline ) {
+		$stmt = $this->db->prepare( 'SELECT model FROM models WHERE is_offline = ? AND is_default = 1' );
+		$stmt->execute( array( $isOffline ? 1 : 0 ) );
+		$result = $stmt->fetch( PDO::FETCH_ASSOC );
+		return $result ? $result['model'] : null;
+	}
+
+	public function setDefaultModel( $model, $isOffline ) {
+		$time = time();
+		$isOfflineInt = $isOffline ? 1 : 0;
+
+		// First, unset any existing default for this mode (online or offline)
+		$stmt = $this->db->prepare(
+			'UPDATE models SET is_default = 0, updated_at = ? WHERE is_offline = ? AND is_default = 1'
+		);
+		$stmt->execute( array( $time, $isOfflineInt ) );
+
+		// Then set the new default
+		$stmt = $this->db->prepare(
+			'UPDATE models SET is_default = 1, updated_at = ? WHERE model = ? AND is_offline = ?'
+		);
+		return $stmt->execute( array( $time, $model, $isOfflineInt ) );
+	}
+
+	public function upsertModel( $model, $provider, $isOffline, $inputPrice = null, $outputPrice = null, $cacheReadPrice = null, $cacheWritePrice = null, $perTokens = 1000000 ) {
+		$time = time();
+		$stmt = $this->db->prepare(
+			'INSERT OR REPLACE INTO models (model, provider, is_offline, is_default, input_price, output_price, cache_read_price, cache_write_price, per_tokens, added_at, updated_at)
+			VALUES (?, ?, ?, COALESCE((SELECT is_default FROM models WHERE model = ?), 0), ?, ?, ?, ?, ?, COALESCE((SELECT added_at FROM models WHERE model = ?), ?), ?)'
+		);
+		return $stmt->execute( array( $model, $provider, $isOffline ? 1 : 0, $model, $inputPrice, $outputPrice, $cacheReadPrice, $cacheWritePrice, $perTokens, $model, $time, $time ) );
+	}
+
+	public function getModelPricing( $model ) {
+		$stmt = $this->db->prepare( 'SELECT input_price, output_price, cache_read_price, cache_write_price, per_tokens FROM models WHERE model = ?' );
+		$stmt->execute( array( $model ) );
+		return $stmt->fetch( PDO::FETCH_ASSOC );
 	}
 
 	public function __destruct() {

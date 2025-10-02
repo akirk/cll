@@ -6,6 +6,14 @@ class MessageStreamer {
 	private string $old_message = '';
 	private array $chunks = array();
 	private $logStorage = null;
+	private bool $show_thinking = false;
+	private bool $in_thinking = false;
+	private string $thinking_content = '';
+	private int $spinner_state = 0;
+	private array $spinner_frames = array( '⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏' );
+	private string $tag_buffer = '';
+	private float $thinking_start_time = 0;
+	private array $last_tokens = array();
 	private array $state = array(
 		'maybe_bold'            => false,
 		'maybe_underline'       => false,
@@ -173,8 +181,123 @@ class MessageStreamer {
 		$this->logStorage = $logStorage;
 	}
 
-	public function createCurlWriteHandler( &$message, &$chunk_overflow, &$usage, $model_provider ) {
-		return function ( $curl, $data ) use ( &$message, &$chunk_overflow, &$usage, $model_provider ) {
+	public function setShowThinking( bool $show ): void {
+		$this->show_thinking = $show;
+	}
+
+	public function startThinking(): void {
+		$this->in_thinking = true;
+		$this->thinking_start_time = microtime( true );
+		// Don't clear thinking_content here - only clear when explicitly requested
+		if ( $this->ansi && ! $this->show_thinking ) {
+			echo "\033[90mThinking... " . $this->spinner_frames[0] . "\033[m";
+		} elseif ( $this->ansi && $this->show_thinking ) {
+			echo "\033[90mThinking:\033[m" . PHP_EOL;
+		}
+	}
+
+	public function resetThinking(): void {
+		$this->thinking_content = '';
+		$this->in_thinking = false;
+		$this->tag_buffer = '';
+	}
+
+	public function storeTokens( array $tokens ): void {
+		$this->last_tokens = $tokens;
+	}
+
+	public function getLastTokens(): array {
+		return $this->last_tokens;
+	}
+
+	public function getLastChunks(): array {
+		return $this->chunks;
+	}
+
+	public function updateThinkingSpinner(): void {
+		if ( ! $this->ansi || $this->show_thinking || ! $this->in_thinking ) {
+			return;
+		}
+		$this->spinner_state = ( $this->spinner_state + 1 ) % count( $this->spinner_frames );
+		$elapsed = microtime( true ) - $this->thinking_start_time;
+		$elapsed_str = sprintf( '%.0fs', $elapsed );
+		$word_count = str_word_count( $this->thinking_content );
+		echo "\r\033[90mThinking... " . $this->spinner_frames[ $this->spinner_state ] . " ({$elapsed_str}, {$word_count} words)\033[m";
+	}
+
+	public function endThinking(): void {
+		if ( $this->in_thinking ) {
+			if ( $this->ansi && ! $this->show_thinking ) {
+				// Clear the spinner line
+				echo "\r\033[K";
+			}
+		}
+		$this->in_thinking = false;
+	}
+
+	public function outputThinking( string $content ): void {
+		$this->thinking_content .= $content;
+		if ( $this->show_thinking && $this->ansi ) {
+			echo "\033[90m" . $content . "\033[m";
+		}
+	}
+
+	public function getThinkingContent(): string {
+		return $this->thinking_content;
+	}
+
+	public function clearThinkingContent(): void {
+		$this->thinking_content = '';
+	}
+
+	private function processThinkTags( &$content, &$thinking ) {
+		// Buffer content to handle split tags
+		$this->tag_buffer .= $content;
+		$content = '';
+		$output = '';
+
+		// Check for <think> opening tag
+		if ( ! $this->in_thinking && strpos( $this->tag_buffer, '<think>' ) !== false ) {
+			$parts = explode( '<think>', $this->tag_buffer, 2 );
+			$output .= $parts[0]; // Content before <think>
+			$this->tag_buffer = isset( $parts[1] ) ? $parts[1] : '';
+			$this->startThinking();
+		}
+
+		// Check for </think> closing tag
+		if ( $this->in_thinking && strpos( $this->tag_buffer, '</think>' ) !== false ) {
+			$parts = explode( '</think>', $this->tag_buffer, 2 );
+			$thinkingText = $parts[0];
+			$this->outputThinking( $thinkingText );
+			$thinking .= $thinkingText;
+			$this->endThinking();
+			$this->tag_buffer = isset( $parts[1] ) ? $parts[1] : '';
+			$output .= $this->tag_buffer;
+			$this->tag_buffer = '';
+		} elseif ( $this->in_thinking ) {
+			// We're in thinking mode, accumulate content
+			// Keep last 10 chars in buffer in case of split tag
+			if ( strlen( $this->tag_buffer ) > 10 ) {
+				$thinkingText = substr( $this->tag_buffer, 0, -10 );
+				$this->outputThinking( $thinkingText );
+				$thinking .= $thinkingText;
+				$this->tag_buffer = substr( $this->tag_buffer, -10 );
+				$this->updateThinkingSpinner();
+			}
+		} else {
+			// Not in thinking mode
+			// Keep last 10 chars in buffer in case of split <think> tag
+			if ( strlen( $this->tag_buffer ) > 10 ) {
+				$output .= substr( $this->tag_buffer, 0, -10 );
+				$this->tag_buffer = substr( $this->tag_buffer, -10 );
+			}
+		}
+
+		$content = $output;
+	}
+
+	public function createCurlWriteHandler( &$message, &$chunk_overflow, &$usage, $model_provider, &$thinking = '' ) {
+		return function ( $curl, $data ) use ( &$message, &$chunk_overflow, &$usage, $model_provider, &$thinking ) {
 			if ( 200 !== curl_getinfo( $curl, CURLINFO_HTTP_CODE ) ) {
 				$error = json_decode( trim( $chunk_overflow . $data ), true );
 				if ( $error ) {
@@ -203,7 +326,18 @@ class MessageStreamer {
 				}
 
 				if ( $model_provider === 'Anthropic' ) {
-					if ( isset( $json['delta']['text'] ) ) {
+					// Handle thinking content blocks
+					if ( isset( $json['type'] ) && $json['type'] === 'content_block_start' && isset( $json['content_block']['type'] ) && $json['content_block']['type'] === 'thinking' ) {
+						$this->startThinking();
+					} elseif ( isset( $json['type'] ) && $json['type'] === 'content_block_delta' && isset( $json['delta']['type'] ) && $json['delta']['type'] === 'thinking_delta' ) {
+						$this->updateThinkingSpinner();
+						if ( isset( $json['delta']['thinking'] ) ) {
+							$this->outputThinking( $json['delta']['thinking'] );
+							$thinking .= $json['delta']['thinking'];
+						}
+					} elseif ( isset( $json['type'] ) && $json['type'] === 'content_block_stop' && $this->in_thinking ) {
+						$this->endThinking();
+					} elseif ( isset( $json['delta']['text'] ) ) {
 						foreach ( $this->outputMessage( $json['delta']['text'] ) as $output ) {
 							echo $output;
 						}
@@ -211,13 +345,38 @@ class MessageStreamer {
 					} else {
 						$chunk_overflow = $item;
 					}
-				} elseif ( isset( $json['choices'][0]['delta']['content'] ) ) {
-					foreach ( $this->outputMessage( $json['choices'][0]['delta']['content'] ) as $output ) {
-						echo $output;
-					}
-					$message .= $json['choices'][0]['delta']['content'];
 				} else {
-					$chunk_overflow = $item;
+					// OpenAI and Ollama handling
+					// Check for reasoning content (o1/o3 models)
+					if ( isset( $json['choices'][0]['delta']['reasoning_content'] ) ) {
+						if ( ! $this->in_thinking ) {
+							$this->startThinking();
+						}
+						$this->updateThinkingSpinner();
+						$this->outputThinking( $json['choices'][0]['delta']['reasoning_content'] );
+						$thinking .= $json['choices'][0]['delta']['reasoning_content'];
+					} elseif ( isset( $json['choices'][0]['delta']['content'] ) ) {
+						$content = $json['choices'][0]['delta']['content'];
+
+						// For Ollama, check for <think> tags
+						if ( $model_provider === 'Ollama' ) {
+							$this->processThinkTags( $content, $thinking );
+						}
+
+						if ( $this->in_thinking && $model_provider !== 'Ollama' ) {
+							$this->endThinking();
+						}
+
+						// Only output non-empty content
+						if ( ! empty( $content ) ) {
+							foreach ( $this->outputMessage( $content ) as $output ) {
+								echo $output;
+							}
+							$message .= $content;
+						}
+					} else {
+						$chunk_overflow = $item;
+					}
 				}
 			}
 
