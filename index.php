@@ -887,7 +887,7 @@ function renderConversationItem( $storage, $id ) {
 									<span class="thinking-icon">💭</span>
 									<span class="thinking-label">Thought Process</span>
 								</div>
-								<div class="thinking-content"><?php echo htmlspecialchars( $thinking ); ?></div>
+								<div class="thinking-content"><?php echo htmlspecialchars( trim( $thinking ) ); ?></div>
 							</div>
 							<?php
 						endif;
@@ -968,6 +968,11 @@ function renderConversationItem( $storage, $id ) {
 						button.textContent = 'View Markdown';
 					}
 				}
+
+				function toggleThinking(header) {
+					const container = header.closest('.thinking-container');
+					container.classList.toggle('collapsed');
+				}
 				</script>
 
 				<div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee;">
@@ -1031,7 +1036,6 @@ function renderConversationItem( $storage, $id ) {
 
 				// Load conversation messages for API context
 				<?php
-				echo 'conversationMessages = ';
 				$apiMessages = array();
 				if ( $messages ) {
 					foreach ( $messages as $message ) {
@@ -1046,8 +1050,15 @@ function renderConversationItem( $storage, $id ) {
 						}
 					}
 				}
-				echo json_encode( $apiMessages );
-				?>;
+
+				$json = json_encode( $apiMessages, JSON_INVALID_UTF8_SUBSTITUTE | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE );
+				if ( $json === false ) {
+					echo 'console.error("JSON encoding failed: ' . addslashes( json_last_error_msg() ) . '");';
+					echo 'conversationMessages = [];';
+				} else {
+					echo 'conversationMessages = ' . $json . ';';
+				}
+				?>
 
 				async function loadApiConfig() {
 					try {
