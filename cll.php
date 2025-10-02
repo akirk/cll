@@ -871,7 +871,8 @@ while ( true ) {
 			}
 
 			$inputFixturePath = __DIR__ . '/tests/fixtures/input/' . $basename . '.json';
-			$expectedFixturePath = __DIR__ . '/tests/fixtures/expected/' . $basename . '-output.txt';
+			$expectedDir = $ansi ? '/tests/fixtures/expected-ansi/' : '/tests/fixtures/expected/';
+			$expectedFixturePath = __DIR__ . $expectedDir . $basename . '.txt';
 
 			// Check if file exists
 			if ( file_exists( $inputFixturePath ) ) {
@@ -884,71 +885,92 @@ while ( true ) {
 			}
 
 			// Write the chunks as JSON array (input fixture)
-			$json = json_encode( $lastChunks, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE );
+			// The API may split multi-byte UTF-8 characters across chunks
+			// We need to save chunks with broken UTF-8 as base64 objects
+			echo "\n\033[33mPreparing chunks for fixture:\033[m\n";
+
+			// Convert chunks: valid UTF-8 as strings, broken UTF-8 as base64 objects
+			$jsonChunks = array();
+			$invalidCount = 0;
+			foreach ( $lastChunks as $chunk ) {
+				if ( mb_check_encoding( $chunk, 'UTF-8' ) ) {
+					// Valid UTF-8, save as string
+					$jsonChunks[] = $chunk;
+				} else {
+					// Broken UTF-8, save as object with base64
+					$invalidCount++;
+					$jsonChunks[] = array(
+						'_base64' => base64_encode( $chunk ),
+					);
+				}
+			}
+
+			$json = json_encode( $jsonChunks, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT );
+			if ( $json === false ) {
+				echo "\033[31mError: Failed to encode chunks as JSON: " . json_last_error_msg() . "\033[m\n";
+				continue;
+			}
+
+			if ( $invalidCount > 0 ) {
+				echo "\033[33mWarning: {$invalidCount} chunks have broken UTF-8 (split multi-byte characters)\033[m\n";
+				echo "These are preserved as base64 objects: {\"_base64\": \"...\"}\n";
+			}
 			if ( file_put_contents( $inputFixturePath, $json ) === false ) {
 				echo "\033[31mError: Failed to write input fixture\033[m\n";
 				continue;
 			}
 
-			// Generate the expected output by running the chunks through the streamer
+			// Generate both expected outputs (with and without ANSI)
+			$expectedOutputPlain = '';
+			$expectedOutputAnsi = '';
+
+			// Plain output (no ANSI)
 			$testStreamer = new MessageStreamer( false );
 			iterator_to_array( $testStreamer->outputMessage( '' ) );
 			$testStreamer->clearChunks();
-
-			$expectedOutput = '';
 			foreach ( $lastChunks as $chunk ) {
 				$result = iterator_to_array( $testStreamer->outputMessage( $chunk ) );
-				$expectedOutput .= implode( '', $result );
+				$expectedOutputPlain .= implode( '', $result );
 			}
 
-			// Write the expected output
-			if ( file_put_contents( $expectedFixturePath, $expectedOutput ) === false ) {
-				echo "\033[31mError: Failed to write expected output fixture\033[m\n";
+			// ANSI output
+			$testStreamer = new MessageStreamer( true );
+			iterator_to_array( $testStreamer->outputMessage( '' ) );
+			$testStreamer->clearChunks();
+			foreach ( $lastChunks as $chunk ) {
+				$result = iterator_to_array( $testStreamer->outputMessage( $chunk ) );
+				$expectedOutputAnsi .= implode( '', $result );
+			}
+
+			// Create expected directories if they don't exist
+			$expectedPlainPath = __DIR__ . '/tests/fixtures/expected/' . $basename . '.txt';
+			$expectedAnsiPath = __DIR__ . '/tests/fixtures/expected-ansi/' . $basename . '.txt';
+
+			if ( ! is_dir( __DIR__ . '/tests/fixtures/expected' ) ) {
+				mkdir( __DIR__ . '/tests/fixtures/expected', 0755, true );
+			}
+			if ( ! is_dir( __DIR__ . '/tests/fixtures/expected-ansi' ) ) {
+				mkdir( __DIR__ . '/tests/fixtures/expected-ansi', 0755, true );
+			}
+
+			// Write both expected outputs
+			if ( file_put_contents( $expectedPlainPath, $expectedOutputPlain ) === false ) {
+				echo "\033[31mError: Failed to write plain expected output fixture\033[m\n";
+				continue;
+			}
+			if ( file_put_contents( $expectedAnsiPath, $expectedOutputAnsi ) === false ) {
+				echo "\033[31mError: Failed to write ANSI expected output fixture\033[m\n";
 				continue;
 			}
 
-			// Generate test method name
-			$testMethodName = 'test' . str_replace( ' ', '', ucwords( str_replace( array( '-', '_' ), ' ', $basename ) ) );
-
-			// Add test method to MessageStreamerTest.php
-			$testFile = __DIR__ . '/tests/MessageStreamerTest.php';
-			$testContent = file_get_contents( $testFile );
-
-			// Check if test already exists
-			if ( strpos( $testContent, "public function {$testMethodName}()" ) !== false ) {
-				echo "\033[33mTest method {$testMethodName} already exists in MessageStreamerTest.php\033[m\n";
-			} else {
-				// Find the position to insert (before the closing brace)
-				$insertPos = strrpos( $testContent, '}' );
-				if ( $insertPos !== false ) {
-					$newTestMethod = "\n\tpublic function {$testMethodName}() {\n";
-					$newTestMethod .= "\t\t// Load token stream from fixture\n";
-					$newTestMethod .= "\t\t\$tokens = json_decode( file_get_contents( __DIR__ . '/fixtures/input/{$basename}.json' ), true );\n\n";
-					$newTestMethod .= "\t\t// Clear any existing state\n";
-					$newTestMethod .= "\t\titerator_to_array( \$this->streamer->outputMessage( '' ) );\n";
-					$newTestMethod .= "\t\t\$this->streamer->clearChunks();\n\n";
-					$newTestMethod .= "\t\t// Process each token individually to simulate streaming\n";
-					$newTestMethod .= "\t\t\$output = '';\n";
-					$newTestMethod .= "\t\tforeach ( \$tokens as \$token ) {\n";
-					$newTestMethod .= "\t\t\t\$result = iterator_to_array( \$this->streamer->outputMessage( \$token ) );\n";
-					$newTestMethod .= "\t\t\t\$output .= implode( '', \$result );\n";
-					$newTestMethod .= "\t\t}\n\n";
-					$newTestMethod .= "\t\t// Compare output against fixture\n";
-					$newTestMethod .= "\t\t\$this->assertStringEqualsFileOrWrite( __DIR__ . '/fixtures/expected/{$basename}-output.txt', \$output );\n";
-					$newTestMethod .= "\t}\n";
-
-					$newContent = substr( $testContent, 0, $insertPos ) . $newTestMethod . '}';
-					file_put_contents( $testFile, $newContent );
-					echo "\033[32m✓ Added test method {$testMethodName} to MessageStreamerTest.php\033[m\n";
-				}
-			}
-
 			echo "\033[32m✓ Saved test fixtures:\033[m\n";
-			echo "  Input:    {$inputFixturePath} (" . count( $lastChunks ) . " chunks)\n";
-			echo "  Expected: {$expectedFixturePath}\n";
+			echo "  Input:         {$inputFixturePath} (" . count( $lastChunks ) . " chunks)\n";
+			echo "  Expected:      {$expectedPlainPath}\n";
+			echo "  Expected ANSI: {$expectedAnsiPath}\n";
+			echo "\n\033[90mNote: Tests run automatically via fixtureProvider data provider\033[m\n";
 			echo "\n\033[33mNext steps:\033[m\n";
-			echo "  1. Review and edit the expected output: {$expectedFixturePath}\n";
-			echo "  2. Run tests: \033[1mcomposer test -- --filter {$testMethodName}\033[m\n";
+			echo "  1. Review and edit the expected outputs if needed\n";
+			echo "  2. Run tests: \033[1mcomposer test\033[m\n";
 		} else {
 			echo "\n\033[1m─── Debug Info ───\033[m\n";
 

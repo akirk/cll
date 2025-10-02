@@ -83,7 +83,7 @@ class MessageStreamerTest extends TestCase {
 		$this->assertEquals( count( $tokens ), count( $this->streamer->getChunks() ) );
 
 		// Compare output against fixture
-		$this->assertStringEqualsFileOrWrite( __DIR__ . '/fixtures/expected/token-stream-output.txt', $output );
+		$this->assertStringEqualsFileOrWrite( __DIR__ . '/fixtures/expected/token-stream.txt', $output );
 	}
 
 	public function testTokenStreamBoldFormatting() {
@@ -207,11 +207,19 @@ class MessageStreamerTest extends TestCase {
 	 */
 	public function testInputFixtures( $inputFile, $filename ) {
 		$streamer = new MessageStreamer( false );
-		$expectedFile = __DIR__ . '/fixtures/expected/' . $filename . '-output.txt';
+		$expectedFile = __DIR__ . '/fixtures/expected/' . $filename . '.txt';
 
 		// Load token stream from fixture
 		$tokens = json_decode( file_get_contents( $inputFile ), true );
 		$this->assertIsArray( $tokens, "Failed to decode JSON from $inputFile" );
+
+		// Decode base64-encoded chunks (for broken UTF-8)
+		$tokens = array_map( function( $token ) {
+			if ( is_array( $token ) && isset( $token['_base64'] ) ) {
+				return base64_decode( $token['_base64'] );
+			}
+			return $token;
+		}, $tokens );
 
 		// Clear any existing state
 		iterator_to_array( $streamer->outputMessage( '' ) );
@@ -233,11 +241,19 @@ class MessageStreamerTest extends TestCase {
 	 */
 	public function testInputFixturesWithAnsi( $inputFile, $filename ) {
 		$streamer = new MessageStreamer( true );
-		$expectedFile = __DIR__ . '/fixtures/expected-ansi/' . $filename . '-output.txt';
+		$expectedFile = __DIR__ . '/fixtures/expected-ansi/' . $filename . '.txt';
 
 		// Load token stream from fixture
 		$tokens = json_decode( file_get_contents( $inputFile ), true );
 		$this->assertIsArray( $tokens, "Failed to decode JSON from $inputFile" );
+
+		// Decode base64-encoded chunks (for broken UTF-8)
+		$tokens = array_map( function( $token ) {
+			if ( is_array( $token ) && isset( $token['_base64'] ) ) {
+				return base64_decode( $token['_base64'] );
+			}
+			return $token;
+		}, $tokens );
 
 		// Clear any existing state
 		iterator_to_array( $streamer->outputMessage( '' ) );

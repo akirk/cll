@@ -14,6 +14,7 @@ class MessageStreamer {
 	private string $tag_buffer = '';
 	private float $thinking_start_time = 0;
 	private array $last_tokens = array();
+	private string $utf8_buffer = '';
 	private array $state = array(
 		'maybe_bold'            => false,
 		'maybe_underline'       => false,
@@ -175,6 +176,7 @@ class MessageStreamer {
 
 	public function clearChunks(): void {
 		$this->chunks = array();
+		$this->utf8_buffer = '';
 	}
 
 	public function setLogStorage( $logStorage ): void {
@@ -307,6 +309,54 @@ class MessageStreamer {
 				}
 				return strlen( $data );
 			}
+
+			// Prepend any buffered UTF-8 bytes from previous chunk
+			if ( $this->utf8_buffer !== '' ) {
+				$data = $this->utf8_buffer . $data;
+				$this->utf8_buffer = '';
+			}
+
+			// Check if data ends with incomplete UTF-8 sequence and buffer it
+			$data_len = strlen( $data );
+			if ( $data_len > 0 ) {
+				$last_byte = ord( $data[ $data_len - 1 ] );
+				$incomplete_bytes = 0;
+
+				// Check for incomplete multi-byte sequence at end
+				// UTF-8 sequence starters: 110xxxxx (2 bytes), 1110xxxx (3 bytes), 11110xxx (4 bytes)
+				if ( $data_len >= 1 && ( $last_byte & 0xC0 ) === 0x80 ) {
+					// Last byte is a continuation byte, check how many we have
+					for ( $i = 1; $i <= min( 3, $data_len ); $i++ ) {
+						$byte = ord( $data[ $data_len - $i ] );
+						if ( ( $byte & 0xC0 ) !== 0x80 ) {
+							// Found the start byte
+							$expected_bytes = 0;
+							if ( ( $byte & 0xE0 ) === 0xC0 ) {
+								$expected_bytes = 2;
+							} elseif ( ( $byte & 0xF0 ) === 0xE0 ) {
+								$expected_bytes = 3;
+							} elseif ( ( $byte & 0xF8 ) === 0xF0 ) {
+								$expected_bytes = 4;
+							}
+
+							if ( $expected_bytes > 0 && $i < $expected_bytes ) {
+								$incomplete_bytes = $i;
+							}
+							break;
+						}
+					}
+				} elseif ( ( $last_byte & 0xE0 ) === 0xC0 || ( $last_byte & 0xF0 ) === 0xE0 || ( $last_byte & 0xF8 ) === 0xF0 ) {
+					// Last byte is a start byte without continuation
+					$incomplete_bytes = 1;
+				}
+
+				// Buffer incomplete bytes for next chunk
+				if ( $incomplete_bytes > 0 ) {
+					$this->utf8_buffer = substr( $data, -$incomplete_bytes );
+					$data = substr( $data, 0, -$incomplete_bytes );
+				}
+			}
+
 			$items = explode( 'data: ', $data );
 			foreach ( $items as $item ) {
 				if ( ! $item ) {
@@ -736,7 +786,9 @@ class MessageStreamer {
 				// Start of a headline
 				$this->state['headline'] = true;
 				$this->state['trimnext'] = true;
-				yield "\033[4m";
+				if ( $this->ansi ) {
+					yield "\033[4m";
+				}
 				while ( $i < $length && ( $message[ $i ] === '#' || $message[ $i ] === ' ' ) ) {
 					++$i;
 				}
@@ -750,7 +802,9 @@ class MessageStreamer {
 					continue;
 				}
 				if ( $this->state['bold'] || $this->state['headline'] || $this->state['maybe_bold'] || $this->state['maybe_underline'] ) {
-					yield "\033[m"; // Reset bold and headline
+					if ( $this->ansi ) {
+						yield "\033[m"; // Reset bold and headline
+					}
 					$this->state['bold'] = false;
 					$this->state['headline'] = false;
 					$this->state['maybe_bold'] = false;
