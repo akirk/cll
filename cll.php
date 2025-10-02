@@ -423,8 +423,27 @@ $wrapper = array(
 );
 
 if ( $ansi || isset( $options['v'] ) ) {
-	$offlineLabel = ( $model_provider === 'Ollama' ) ? ' \033[90m(offline)\033[m' : '';
-	fprintf( STDERR, 'Model: ' . $model . ' via ' . $model_provider . $offlineLabel . ( isset( $options['v'] ) ? ' (verbose)' : '' ) . " - \033[90m'help' for commands, 't' for thinking, 'w' for webui\033[m\n" );
+	$offlineLabel = '';
+	$thinkingLabel = '';
+	$helpHint = "'help' for commands";
+
+	if ( $isOffline ) {
+		$offlineLabel = $ansi ? " \033[90m(offline)\033[m" : ' (offline)';
+	}
+
+	if ( isset( $options['t'] ) || isset( $options['show-thinking'] ) ) {
+		$thinkingLabel = ', thinking enabled';
+	} else {
+		$helpHint .= ", 't' for thinking";
+	}
+
+	$helpHint .= ", 'w' for webui";
+
+	if ( $ansi ) {
+		$helpHint = "\033[90m{$helpHint}\033[m";
+	}
+
+	fprintf( STDERR, "Model: {$model} via {$model_provider}{$offlineLabel}" . ( isset( $options['v'] ) ? ' (verbose)' : '' ) . "{$thinkingLabel} - {$helpHint}\n" );
 }
 
 // Let SQLite auto-generate the conversation ID
@@ -1455,8 +1474,8 @@ while ( true ) {
 	$hints = array();
 	if ( ! empty( $thinking ) && ! isset( $options['t'] ) && ! isset( $options['show-thinking'] ) ) {
 		$hints[] = "'t' to view thought process";
-	}
-	$hints[] = "'w' to open web UI";
+		$hints[] = "'w' to open web UI";
+}
 
 	if ( ! empty( $hints ) ) {
 		$hint_text = '(Type ' . implode( ', ', $hints ) . ')';
