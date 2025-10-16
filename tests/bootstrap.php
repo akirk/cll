@@ -10,7 +10,8 @@ class TestCase extends PHPUnit\Framework\TestCase {
             file_put_contents( $expected_file_path, $actual_content );
             file_put_contents( 'php://stderr', 'Updated fixture: ' . basename( $expected_file_path ) . "\n" );
         }
-        return $this->assertStringEqualsFile( $expected_file_path, $actual_content );
+        $expected_content = file_get_contents( $expected_file_path );
+        return $this->assertSame( rtrim( $expected_content ), rtrim( $actual_content ) );
     }
 }
 

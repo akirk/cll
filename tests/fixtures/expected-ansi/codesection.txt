@@ -1,0 +1,81 @@
+To ensure [1monly[m the two keys [34m"blogname"[m and [34m"blogdescription"[m are accepted when processing the options, you can add a whitelist check before calling [34mupdate_option[m. Here's how you can modify your code:
+
+[34m[m```php
+[90m$allowed_keys = ['blogname', 'blogdescription'];
+
+$blueprint = json_decode('{
+	"steps": [
+		{
+			"step": "setSiteOptions",
+			"options": {
+				"blogname": "Step Library Demo",
+				"blogdescription": "Trying out WordPress Playground."
+			}
+		}
+	]
+}', true); // Note: pass true to get associative array instead of stdClass
+
+foreach ($blueprint['steps'] as $step) {
+	switch ($step['step']) {
+		case "setSiteOptions":
+			foreach ($step['options'] as $key => $value) {
+				// Only accept allowed keys
+				if (in_array($key, $allowed_keys, true)) {
+					update_option($key, $value);
+				} else {
+					// Optionally, handle unexpected keys, e.g., log or throw an error
+					error_log("Unexpected option key: {$key}");
+				}
+			}
+			break;
+	}
+}
+[m```
+
+[4mImportant notes:[m
+1. [1mUse [34mjson_decode[m with [34mtrue[m as the second parameter[m: This ensures you decode into an associative array, making [34m$blueprint['steps'][m accessible as an array. Otherwise, you'd access objects via [34m->[m.
+
+2. [1mWhitelist keys[m: Only keys that are exactly [34m"blogname"[m or [34m"blogdescription"[m are accepted and passed into [34mupdate_option[m.
+
+3. [1mHandle unexpected keys[m: You might want to log or throw exceptions if invalid keys are present. This helps catch errors or malicious input early.
+
+[4mSummary[m
+This approach allows your code to safely accept only those two keys when updating the site options while ignoring or reporting any others.Absolutely! Using [34marray_intersect_key[m is a clean and efficient way to filter your [34m$step['options'][m to only allow certain keys.
+
+Here's how you can do it with your example:
+
+[34m[m```php
+[90m$allowed_keys = ['blogname' => true, 'blogdescription' => true];
+
+$blueprint = json_decode('{
+	"steps": [
+		{
+			"step": "setSiteOptions",
+			"options": {
+				"blogname": "Step Library Demo",
+				"blogdescription": "Trying out WordPress Playground."
+			}
+		}
+	]
+}', true);
+
+foreach ($blueprint['steps'] as $step) {
+	switch ($step['step']) {
+		case "setSiteOptions":
+			// Filter options to only allowed keys
+			$filtered_options = array_intersect_key($step['options'], $allowed_keys);
+
+			foreach ($filtered_options as $key => $value) {
+				update_option($key, $value);
+			}
+			break;
+	}
+}
+[m```
+
+[4mExplanation:[m
+- We create [34m$allowed_keys[m as an associative array where keys are what you want to allow.
+- [34marray_intersect_key($step['options'], $allowed_keys)[m keeps only the keys in [34m$step['options'][m that also exist in [34m$allowed_keys[m.
+- Then you safely update only those allowed options.
+
+This approach is neat and avoids going through and checking each key with [34min_array[m manually.

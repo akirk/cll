@@ -477,35 +477,32 @@ class MessageStreamer {
 				if ( $this->state['in_code_block'] ) {
 					if ( $this->ansi ) {
 						yield "\033[m";
-					}
-					if ( false !== $this->state['maybe_code_block_end'] ) {
-						if ( $this->ansi ) {
-							yield substr( $message, $this->state['maybe_code_block_end'], 2 );
+						if ( false !== $this->state['maybe_code_block_end'] ) {
+							yield substr( $message, $this->state['maybe_code_block_end'], 3 );
+							$this->state['maybe_code_block_end'] = false;
 						}
-						$this->state['maybe_code_block_end'] = false;
 					}
 					$this->state['in_code_block'] = false;
+					++$i;
+					continue;
 				} else {
 					$this->state['code_block_start'] = true;
 					if ( $this->ansi ) {
 						yield substr( $message, $i - 2, 2 );
+						yield $message[ $i ];
 					}
+					++$i;
+					continue;
 				}
-				if ( $this->ansi ) {
-					yield $message[ $i ];
-				}
-				++$i;
-				continue;
 			}
 
 			// If we're in a code block, just output the text as is
 			if ( $this->state['code_block_start'] ) {
-				if ( $this->ansi ) {
-					yield $message[ $i ];
-				}
+				yield $message[ $i ];
 				if ( $message[ $i ] === PHP_EOL ) {
 					$this->state['code_block_start'] = false;
 					$this->state['in_code_block'] = true;
+					$this->state['maybe_space_to_tab'] = 0;
 					// show in darkgrey
 					if ( $this->ansi ) {
 						yield "\033[90m";
@@ -531,8 +528,8 @@ class MessageStreamer {
 					$spaces_count = $this->state['maybe_space_to_tab'];
 					$this->state['maybe_space_to_tab'] = false;
 					if ( $spaces_count > 0 ) {
-						if ( $spaces_count % 4 == 0 ) {
-							yield str_repeat( "\t", $spaces_count / 4 );
+						if ( $spaces_count % 2 == 0 ) {
+							yield str_repeat( "\t", $spaces_count / 2 );
 						} else {
 							yield str_repeat( ' ', $spaces_count );
 						}
@@ -554,8 +551,8 @@ class MessageStreamer {
 				continue;
 			}
 
-			// Math expression detection and processing (outside code blocks)
-			if ( ! $this->state['in_code_block'] && ! $this->state['code_block_start'] ) {
+			// Math expression detection and processing (outside code blocks and inline code)
+			if ( ! $this->state['in_code_block'] && ! $this->state['code_block_start'] && ! $this->state['inline_code'] ) {
 				// Check for start of math expressions
 				if ( ! $this->state['math_type'] ) {
 					// Handle pending backslash from previous token
@@ -765,7 +762,7 @@ class MessageStreamer {
 				continue;
 			}
 
-			if ( substr( $message, $i, 1 ) === '`' ) {
+			if ( substr( $message, $i, 1 ) === '`' && ! $this->state['math_type'] ) {
 				$this->state['inline_code'] = ! $this->state['inline_code'];
 				if ( $this->ansi ) {
 					yield $this->state['inline_code'] ? "\033[34m" : "\033[m";
