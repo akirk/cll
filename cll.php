@@ -6,14 +6,41 @@ require_once __DIR__ . '/includes/ApiClient.php';
 $version = '2.0.2';
 $ansi = function_exists( 'posix_isatty' ) && posix_isatty( STDOUT );
 
-$options = getopt( 'ds:li:p:vhfm::r:w::nto', array( 'help', 'version', 'webui', 'show-thinking', 'offline' ), $initial_input );
+$options = array();
+$initial_input = 1;
+$i = 1;
+while ( $i < count( $_SERVER['argv'] ) ) {
+	$arg = $_SERVER['argv'][$i];
 
-$new_argv = array( $_SERVER['argv'][0] );
-foreach ( $_SERVER['argv'] as $i => $arg ) {
-	if ( preg_match( '/^-[mw]$/', $arg ) && isset( $_SERVER['argv'][$i + 1] ) ) {
-		$options['m'] = $_SERVER['argv'][++$i];
-		$initial_input += 1;
+	if ( '--help' === $arg ) {
+		$options['help'] = true;
+	} elseif ( '--version' === $arg ) {
+		$options['version'] = true;
+	} elseif ( '--webui' === $arg ) {
+		$options['webui'] = true;
+	} elseif ( '--show-thinking' === $arg ) {
+		$options['show-thinking'] = true;
+	} elseif ( '--offline' === $arg ) {
+		$options['offline'] = true;
+	} elseif ( preg_match( '/^-([a-z]+)$/i', $arg, $matches ) ) {
+		$flags = str_split( $matches[1] );
+		foreach ( $flags as $flag ) {
+			if ( in_array( $flag, array( 'd', 'l', 'v', 'h', 'f', 'n', 't', 'o' ) ) ) {
+				$options[ $flag ] = true;
+			} elseif ( in_array( $flag, array( 's', 'i', 'p', 'm', 'r', 'w' ) ) ) {
+				if ( isset( $_SERVER['argv'][$i + 1] ) && ! preg_match( '/^-/', $_SERVER['argv'][$i + 1] ) ) {
+					$options[ $flag ] = $_SERVER['argv'][++$i];
+					$initial_input++;
+				} else {
+					$options[ $flag ] = false;
+				}
+			}
+		}
+		$initial_input++;
+	} else {
+		break;
 	}
+	$i++;
 }
 
 if ( ! isset( $options['m'] ) ) {
@@ -164,6 +191,11 @@ if ( $shouldUpdate ) {
 	}
 	fprintf( STDERR, "%s\n", implode( ', ', $parts ) );
 	$supported_models = $apiClient->getSupportedModels();
+
+	// If -m was used without a value to trigger this update, automatically show models
+	if ( isset( $options['m'] ) && $options['m'] === false ) {
+		$show_models_after_init = true;
+	}
 }
 
 // Populate autocomplete models
@@ -296,6 +328,67 @@ foreach ( $supported_models as $m => $provider ) {
 }
 ksort( $supported_models_by_provider );
 
+// If -m was used without a value, show models list and exit
+if ( isset( $show_models_after_init ) && $show_models_after_init ) {
+	// Get default models
+	$defaultOnline = null;
+	$defaultOffline = null;
+	if ( $logStorage && method_exists( $logStorage, 'getDefaultModel' ) ) {
+		$defaultOnline = $logStorage->getDefaultModel( false );
+		$defaultOffline = $logStorage->getDefaultModel( true );
+	}
+
+	// Infer defaults if not set
+	if ( ! $defaultOnline ) {
+		foreach ( $supported_models as $m => $p ) {
+			if ( $p !== 'Ollama' ) {
+				$defaultOnline = $m;
+				break;
+			}
+		}
+	}
+	if ( ! $defaultOffline ) {
+		foreach ( $supported_models as $m => $p ) {
+			if ( $p === 'Ollama' ) {
+				$defaultOffline = $m;
+				break;
+			}
+		}
+	}
+
+	echo "\n\033[1mAvailable Models:\033[m\n";
+	foreach ( $supported_models_by_provider as $provider => $groups ) {
+		echo "\n\033[1m{$provider}:\033[m\n";
+		foreach ( $groups as $group => $models ) {
+			$count = count( $models );
+			$firstModel = $models[0];
+
+			// Collect markers for the first model in group
+			$markers = array();
+			if ( $firstModel === $model ) {
+				$markers[] = "\033[32mcurrent\033[m";
+			}
+			if ( $firstModel === $defaultOnline ) {
+				$markers[] = "\033[36mdefault online\033[m";
+			}
+			if ( $firstModel === $defaultOffline ) {
+				$markers[] = "\033[36mdefault offline\033[m";
+			}
+			$marker_str = ! empty( $markers ) ? ' (' . implode( ', ', $markers ) . ')' : '';
+
+			if ( $count === 1 ) {
+				echo "  - {$firstModel}{$marker_str}\n";
+			} else {
+				echo "  - {$group}: {$firstModel}{$marker_str}";
+				echo " \033[90m(+{$count} variants)\033[m\n";
+			}
+		}
+	}
+	echo "\n\033[90mUse -m <model> to select a model\033[m\n";
+	echo "\n";
+	exit( 0 );
+}
+
 if ( isset( $options['version'] ) ) {
 	echo basename( $_SERVER['argv'][0] ), ' version ', $version, PHP_EOL;
 	exit( 1 );
@@ -389,7 +482,7 @@ if ( $stat['size'] > 0 ) {
 }
 fclose( $fp_stdin );
 
-if ( isset( $options['m'] ) ) {
+if ( isset( $options['m'] ) && $options['m'] !== false ) {
 	$model = false;
 	if ( isset( $supported_models[ $options['m'] ] ) ) {
 		$model = $options['m'];
@@ -724,16 +817,45 @@ if ( isset( $options['r'] ) ) {
 			// Answer the question right away.
 		}
 	}
-} elseif ( ! empty( $options['s'] ) || isset( $options['f'] ) || substr( $model, 0, 7 ) === 'gpt-oss' ) {
+} elseif ( isset( $options['s'] ) || isset( $options['f'] ) || substr( $model, 0, 7 ) === 'gpt-oss' ) {
 	$system = '';
 	$system_prompt_name = null; // Track the name for tagging
-	if ( ! empty( $options['s'] ) ) {
-		if ( is_numeric( $options['s'] ) ) {
+	if ( isset( $options['s'] ) ) {
+		if ( empty( $options['s'] ) ) {
+			// Empty -s parameter: list all available system prompts
+			if ( $logStorage && method_exists( $logStorage, 'getAllSystemPrompts' ) ) {
+				$allPrompts = $logStorage->getAllSystemPrompts();
+				if ( ! empty( $allPrompts ) ) {
+					echo PHP_EOL, "\033[1mAvailable System Prompts:\033[m", PHP_EOL, PHP_EOL;
+					foreach ( $allPrompts as $prompt ) {
+						$defaultMarker = $prompt['is_default'] ? ' (default)' : '';
+						echo '  ', $prompt['id'], ') ', "\033[1m", $prompt['name'], "\033[m", $defaultMarker, PHP_EOL;
+						if ( ! empty( $prompt['description'] ) ) {
+							echo '     ', $prompt['description'], PHP_EOL;
+						}
+						if ( ! empty( $prompt['prompt'] ) ) {
+							$preview = substr( $prompt['prompt'], 0, 100 );
+							if ( strlen( $prompt['prompt'] ) > 100 ) {
+								$preview .= '...';
+							}
+							echo '     ', "\033[90m", $preview, "\033[m", PHP_EOL;
+						}
+						echo PHP_EOL;
+					}
+					echo "\033[90mUse -s <id> or -s <name> to use a system prompt\033[m", PHP_EOL, PHP_EOL;
+				} else {
+					echo 'No system prompts available.', PHP_EOL;
+				}
+			} else {
+				echo 'System prompts are not available (no storage).', PHP_EOL;
+			}
+			exit( 0 );
+		} elseif ( is_numeric( $options['s'] ) ) {
 			$found_system_prompt = $logStorage->getSystemPrompt( intval( $options['s'] ) );
 		} else {
 			$found_system_prompt = $logStorage->getSystemPromptByName( $options['s'] );
 		}
-		if ( $found_system_prompt ) {
+		if ( isset( $found_system_prompt ) && $found_system_prompt ) {
 			$system = $found_system_prompt['prompt'];
 			$system_prompt_name = $found_system_prompt['name']; // Store the name for tagging
 			$words = preg_split( '/\s+/', $system, 11 );
@@ -744,7 +866,7 @@ if ( isset( $options['r'] ) ) {
 			if ( $ansi || isset( $options['v'] ) ) {
 				echo 'Loaded system prompt ', $found_system_prompt['id'], ': ', implode( ' ', $words ), PHP_EOL;
 			}
-		} else {
+		} elseif ( ! empty( $options['s'] ) ) {
 			$system = $options['s'];
 			$system_prompt_name = null; // Custom prompt, no name
 			if ( $ansi || isset( $options['v'] ) ) {
