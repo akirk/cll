@@ -42,6 +42,18 @@ The project now includes a web interface accessible via `index.php` or by using 
 - **Conversation search**: Search through your conversation history
 - **Tag management**: Organize conversations with tags for better organization
 
+### Importing Conversations
+
+You can import conversation exports from ChatGPT, Claude.ai, or other AI assistants (JSON format):
+
+```bash
+php import-chatgpt-json.php ~/Downloads/conversation.json
+```
+
+The importer auto-detects the source (ChatGPT vs Claude) and prompts you to confirm the model. Use `-m` to specify a model or `-y` for non-interactive mode.
+
+See [IMPORTING.md](IMPORTING.md) for detailed documentation on importing conversations.
+
 ### Parameters
 
 ```
