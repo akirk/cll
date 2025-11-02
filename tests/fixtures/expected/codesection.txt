@@ -1,6 +1,6 @@
-To ensure only the two keys "blogname" and "blogdescription" are accepted when processing the options, you can add a whitelist check before calling update_option. Here's how you can modify your code:
+To ensure only the two keys `"blogname"` and `"blogdescription"` are accepted when processing the options, you can add a whitelist check before calling `update_option`. Here's how you can modify your code:
 
-php
+```php
 $allowed_keys = ['blogname', 'blogdescription'];
 
 $blueprint = json_decode('{
@@ -30,21 +30,21 @@ foreach ($blueprint['steps'] as $step) {
 			break;
 	}
 }
-
+```
 
 Important notes:
-1. Use json_decode with true as the second parameter: This ensures you decode into an associative array, making $blueprint['steps'] accessible as an array. Otherwise, you'd access objects via ->.
+1. Use `json_decode` with `true` as the second parameter: This ensures you decode into an associative array, making `$blueprint['steps']` accessible as an array. Otherwise, you'd access objects via `->`.
 
-2. Whitelist keys: Only keys that are exactly "blogname" or "blogdescription" are accepted and passed into update_option.
+2. Whitelist keys: Only keys that are exactly `"blogname"` or `"blogdescription"` are accepted and passed into `update_option`.
 
 3. Handle unexpected keys: You might want to log or throw exceptions if invalid keys are present. This helps catch errors or malicious input early.
 
 Summary
-This approach allows your code to safely accept only those two keys when updating the site options while ignoring or reporting any others.Absolutely! Using array_intersect_key is a clean and efficient way to filter your $step['options'] to only allow certain keys.
+This approach allows your code to safely accept only those two keys when updating the site options while ignoring or reporting any others.Absolutely! Using `array_intersect_key` is a clean and efficient way to filter your `$step['options']` to only allow certain keys.
 
 Here's how you can do it with your example:
 
-php
+```php
 $allowed_keys = ['blogname' => true, 'blogdescription' => true];
 
 $blueprint = json_decode('{
@@ -71,11 +71,11 @@ foreach ($blueprint['steps'] as $step) {
 			break;
 	}
 }
-`
+```
 
 Explanation:
-- We create $allowed_keys as an associative array where keys are what you want to allow.
-- array_intersect_key($step['options'], $allowed_keys) keeps only the keys in $step['options'] that also exist in $allowed_keys.
+- We create `$allowed_keys` as an associative array where keys are what you want to allow.
+- `array_intersect_key($step['options'], $allowed_keys)` keeps only the keys in `$step['options']` that also exist in `$allowed_keys`.
 - Then you safely update only those allowed options.
 
-This approach is neat and avoids going through and checking each key with in_array manually.
+This approach is neat and avoids going through and checking each key with `in_array` manually.

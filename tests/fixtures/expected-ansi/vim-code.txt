@@ -1,0 +1,266 @@
+In Vim, there isn't a built-in [4mmulticursor[m feature exactly like modern editors (e.g., VSCode), but you can achieve a similar effect by selecting text visually and then replacing [1mall instances[m of that text in the file with something else.
+
+Here’s how you can do it step-by-step:
+
+---
+
+[4mScenario: Replace all instances of a visually selected text[m
+
+1. [1mSelect text in visual mode[m  
+   Position your cursor at the start of the text you want to change.  
+   Press [34mv[m (character-wise visual mode) or [34mV[m (line-wise visual mode) or [34m<Ctrl-v>[m (block visual mode), and then move the cursor to select the text you're targeting.
+
+2. [1mCopy the visually selected text[m  
+   Press [34my[m to yank (copy) the selection. This copies the selected text into the unnamed register.
+
+3. [1mStart the substitution command using the yanked text[m  
+   Type:  
+   ```vim
+[90m   :%s/<C-R>"//g
+[m```  
+   
+   Explanation:  
+   - [34m:%s/[m — start a substitute command in the whole file ([34m%[m for all lines).  
+   - [34m<C-R>"[m — this inserts the contents of register [34m"[m (the unnamed register, i.e., what you yanked) into the command line.  
+   - Then [34m//g[m completes the substitution pattern with an empty replacement (you’ll fill in the replacement next).
+
+4. [1mAdd the replacement text[m  
+   Modify the command to:  
+   ```vim
+[90m   :%s/<C-R>"/REPLACETEXT/g
+[m```  
+   Replace [34mREPLACETEXT[m with the new text you want.
+
+5. [1mPress Enter[m to execute.
+
+---
+
+[4mExample[m
+
+- Visually select the word [34mfoo[m somewhere in the file and yank it ([34my[m).
+- Run command:  
+  ```vim
+[90m	:%s/<C-R>"/bar/g
+[m```  
+- This replaces every occurrence of [34mfoo[m with [34mbar[m.
+
+---
+
+[4mBonus: Mapping it to a command[m
+
+You can create a shortcut if you often do this. For example, put this in your [34m.vimrc[m to prompt for replacement on selected text:
+
+```vim
+[90mvnoremap <leader>r y:let @/ = '\V' . escape(@", '/\') <Bar> %s//<C-r>"<Left><Left><Left>/g<Left><Left>
+[m```
+
+Usage:  
+- Visually select text  
+- Press [34m<leader>r[m (usually [34m\r[m if [34m\[m is your leader)  
+- It will start a substitution command with the selected text filled in and the cursor positioned to type the replacement.
+
+---
+
+[4mSummary[m
+
+- Use visual mode + [34my[m to copy text  
+- Use [34m:%s/<C-R>"/replacement/g[m to replace all occurrence of the selected text with your new text
+
+---
+
+If you want [1mtrue multicursor[m support, Vim has some plugins like:
+
+- [vim-multiple-cursors](https://github.com/terryma/vim-multiple-cursors)  
+- [vim-visual-multi](https://github.com/mg979/vim-visual-multi)
+
+But for quick replacements, the visual yank + [34m:s[m command works well.If the substitution command can't find the pattern after you yank the visual selection, there are several common reasons why it might fail, mainly due to how special characters and newlines in the visual selection are handled in the substitute pattern.
+
+[4mCommon issues and solutions:[m
+
+---
+
+[4m1. [1mThe selected text may include special regex characters[m, which need to be escaped[m
+
+For example, if your selection contains [34m.[m, [34m*[m, [34m\[m, [34m/[m, [34m^[m, [34m$[m etc., the substitute command interprets these as regex metacharacters.
+
+To fix this, you should [1mescape the yanked text properly[m.
+
+[1mUse [34mescape()[m function to escape special chars in pattern[m
+
+Example substitution command using [34mescape()[m:
+
+```vim
+[90m:%s/\V<C-R>=escape(@", '/\')<CR>/REPLACETEXT/g
+[m```
+
+Explanation:
+
+- [34m/\V.../[m — adds “very nomagic” mode which treats the pattern literally, except for [34m\[m and [34m/[m
+- [34m<C-R>=escape(@", '/\')<CR>[m — inserts the yanked text after escaping [34m/[m and [34m\[m since they have special meaning in the substitution pattern delimiter and Vim regex.
+
+Try this exact command:
+
+1. Visually select the text you want
+2. Yank it with [34my[m
+3. Run:
+
+```vim
+[90m:%s/\V<C-R>=escape(@", '/\')<CR>/NEW_TEXT/g
+[m```
+
+---
+
+[4m2. [1mThe visual selection may include extra characters like newline[m[m
+
+If you selected multiple lines visually and yanked, the register might include newline characters which don't work well as a substitution pattern.
+
+One way to confirm:
+
+- After yanking visually, run [34m:let @/ = @\"[m to print what’s in your search register  
+- Check if it contains newlines; if yes, substitute may not find because it tries to match a literal newline.
+
+[1mSolution:[m
+
+- Select single word or continuous characters (not across lines), or  
+- Use commands to replace newlines in the yanked text — but this gets complicated.
+
+---
+
+[4m3. [1mYou may need to define the pattern as a literal string[m[m
+
+The safest method is:
+
+```vim
+[90m:%s/\V<C-R>=escape(@", '\')<CR>/REPLACETEXT/g
+[m```
+
+or if you use [34m/[m as a delimiter and might have slashes in your text, escape [34m/[m as well:
+
+```vim
+[90m:%s/\V<C-R>=escape(@", '/\')<CR>/REPLACETEXT/g
+[m```
+
+---
+
+[4mExample Workflow to test:[m
+
+1. Visual select [1mexactly[m a word or text fragment (no newlines)
+2. Press [34my[m to yank
+3. Type this command exactly (replace [34mNEW[m with your replacement text):
+
+```vim
+[90m:%s/\V<C-R>=escape(@", '/\')<CR>/NEW/g
+[m```
+
+4. Press Enter
+
+---
+
+[4mAlternative: Put the yanked text into the search register and do a search and replace[m
+
+```vim
+[90m" Put yanked text into search register (pattern)
+:let @/ = escape(@", '/\')
+" Then run substitute command:
+:%s//NEW/g
+[m```
+
+---
+
+[4mTL;DR[m
+
+If your original substitution fails, try this safe approach after yanking visually:
+
+```vim
+[90m:%s/\V<C-R>=escape(@", '/\')<CR>/REPLACETEXT/g
+[m```
+
+---
+
+Let me know if you want me to make a small snippet/plugin or mapping that automates this!Your command:
+
+[34m[m```
+[90m:s%/_wildcard.mu.blog+4/wpapps/g
+[m```
+
+looks like an attempt to substitute text using [34m%[m as the delimiter for the [34m:s[m command, which is totally valid in Vim, but it is missing the replacement part (the part after the second delimiter) and also the command does not specify a range, so it defaults to the current line only.
+
+---
+
+[4mBreakdown of your command:[m
+
+- [34m:s[m — substitution command  
+- [34m%[m — delimiter instead of the usual [34m/[m (you can use any character like [34m%[m or [34m#[m)  
+- [34m/_wildcard.mu.blog+4[m — pattern to match (includes special chars like [34m.[m, [34m+[m)  
+- [34m/[m — next delimiter, so it's interpreted as the replacement part here — but since [34m/[m is next, Vim sees an empty replacement  
+- [34mwpapps[m — Vim thinks this is flags which is invalid (or part of replacement?) This is ambiguous.
+
+---
+
+[4mWhat might be going wrong:[m
+
+- You're mixing the delimiter [34m%[m and within the pattern there is a [34m/[m character.
+- Since you used [34m%[m as delimiter, you [4mcannot[m use [34m/[m inside the pattern literally without escaping.
+- When you choose a delimiter for [34m:s[m, the delimiter cannot appear literally inside the pattern or replacement unless escaped.
+
+---
+
+[4mHow to fix:[m
+
+Since your pattern contains [34m/[m character, pick a delimiter [1mthat doesn't appear in your pattern or replacement[m — let’s say [34m#[m or [34m|[m
+
+Then escape special regex characters like [34m.[m, [34m+[m if you want to match literally.
+
+---
+
+[4mExample:[m
+
+You want to replace occurrences of:
+
+[34m/_wildcard.mu.blog+4[m
+
+with
+
+[34mwpapps[m.
+
+Try this (using [34m#[m delimiters):
+
+```vim
+[90m:%s#/_wildcard\.mu\.blog\+4#wpapps#g
+[m```
+
+Explanation:
+
+- [34m%s[m — substitute in whole file
+- [34m#[m — delimiter instead of [34m/[m
+- Pattern:  
+  - [34m/_wildcard[m — literal
+  - [34m.[m should be escaped as [34m\.[m
+  - [34mmu[m literal
+  - [34m.[m escaped as [34m\.[m
+  - [34mblog[m
+  - [34m+[m is a special regex quantifier, so escape [34m\+[m if you want literal plus sign
+  - [34m4[m
+- Replacement: [34mwpapps[m
+- [34mg[m flag: replace all instances in each line
+
+---
+
+[4mSummary:[m
+
+- Pick delimiter that doesn't appear in your pattern, e.g. [34m#[m or [34m|[m
+- Escape regex metacharacters in the pattern ([34m.[m, [34m+[m, etc)
+- Specify a replacement after the second delimiter
+- Add [34m%[m range to substitute in whole file (optional)
+
+---
+
+[4mFinal working example:[m
+
+```vim
+[90m:%s#/_wildcard\.mu\.blog\+4#wpapps#g
+[m```
+
+---
+
+If you want me to help with the exact command for your context, just say!

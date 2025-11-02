@@ -1,0 +1,266 @@
+In Vim, there isn't a built-in multicursor feature exactly like modern editors (e.g., VSCode), but you can achieve a similar effect by selecting text visually and then replacing all instances of that text in the file with something else.
+
+Here’s how you can do it step-by-step:
+
+---
+
+Scenario: Replace all instances of a visually selected text
+
+1. Select text in visual mode  
+   Position your cursor at the start of the text you want to change.  
+   Press `v` (character-wise visual mode) or `V` (line-wise visual mode) or `<Ctrl-v>` (block visual mode), and then move the cursor to select the text you're targeting.
+
+2. Copy the visually selected text  
+   Press `y` to yank (copy) the selection. This copies the selected text into the unnamed register.
+
+3. Start the substitution command using the yanked text  
+   Type:  
+   ```vim
+   :%s/<C-R>"//g
+   ```  
+   
+   Explanation:  
+   - `:%s/` — start a substitute command in the whole file (`%` for all lines).  
+   - `<C-R>"` — this inserts the contents of register `"` (the unnamed register, i.e., what you yanked) into the command line.  
+   - Then `//g` completes the substitution pattern with an empty replacement (you’ll fill in the replacement next).
+
+4. Add the replacement text  
+   Modify the command to:  
+   ```vim
+   :%s/<C-R>"/REPLACETEXT/g
+   ```  
+   Replace `REPLACETEXT` with the new text you want.
+
+5. Press Enter to execute.
+
+---
+
+Example
+
+- Visually select the word `foo` somewhere in the file and yank it (`y`).
+- Run command:  
+  ```vim
+	:%s/<C-R>"/bar/g
+	```  
+- This replaces every occurrence of `foo` with `bar`.
+
+---
+
+Bonus: Mapping it to a command
+
+You can create a shortcut if you often do this. For example, put this in your `.vimrc` to prompt for replacement on selected text:
+
+```vim
+vnoremap <leader>r y:let @/ = '\V' . escape(@", '/\') <Bar> %s//<C-r>"<Left><Left><Left>/g<Left><Left>
+```
+
+Usage:  
+- Visually select text  
+- Press `<leader>r` (usually `\r` if `\` is your leader)  
+- It will start a substitution command with the selected text filled in and the cursor positioned to type the replacement.
+
+---
+
+Summary
+
+- Use visual mode + `y` to copy text  
+- Use `:%s/<C-R>"/replacement/g` to replace all occurrence of the selected text with your new text
+
+---
+
+If you want true multicursor support, Vim has some plugins like:
+
+- [vim-multiple-cursors](https://github.com/terryma/vim-multiple-cursors)  
+- [vim-visual-multi](https://github.com/mg979/vim-visual-multi)
+
+But for quick replacements, the visual yank + `:s` command works well.If the substitution command can't find the pattern after you yank the visual selection, there are several common reasons why it might fail, mainly due to how special characters and newlines in the visual selection are handled in the substitute pattern.
+
+Common issues and solutions:
+
+---
+
+1. The selected text may include special regex characters, which need to be escaped
+
+For example, if your selection contains `.`, `*`, `\`, `/`, `^`, `$` etc., the substitute command interprets these as regex metacharacters.
+
+To fix this, you should escape the yanked text properly.
+
+Use `escape()` function to escape special chars in pattern
+
+Example substitution command using `escape()`:
+
+```vim
+:%s/\V<C-R>=escape(@", '/\')<CR>/REPLACETEXT/g
+```
+
+Explanation:
+
+- `/\V.../` — adds “very nomagic” mode which treats the pattern literally, except for `\` and `/`
+- `<C-R>=escape(@", '/\')<CR>` — inserts the yanked text after escaping `/` and `\` since they have special meaning in the substitution pattern delimiter and Vim regex.
+
+Try this exact command:
+
+1. Visually select the text you want
+2. Yank it with `y`
+3. Run:
+
+```vim
+:%s/\V<C-R>=escape(@", '/\')<CR>/NEW_TEXT/g
+```
+
+---
+
+2. The visual selection may include extra characters like newline
+
+If you selected multiple lines visually and yanked, the register might include newline characters which don't work well as a substitution pattern.
+
+One way to confirm:
+
+- After yanking visually, run `:let @/ = @\"` to print what’s in your search register  
+- Check if it contains newlines; if yes, substitute may not find because it tries to match a literal newline.
+
+Solution:
+
+- Select single word or continuous characters (not across lines), or  
+- Use commands to replace newlines in the yanked text — but this gets complicated.
+
+---
+
+3. You may need to define the pattern as a literal string
+
+The safest method is:
+
+```vim
+:%s/\V<C-R>=escape(@", '\')<CR>/REPLACETEXT/g
+```
+
+or if you use `/` as a delimiter and might have slashes in your text, escape `/` as well:
+
+```vim
+:%s/\V<C-R>=escape(@", '/\')<CR>/REPLACETEXT/g
+```
+
+---
+
+Example Workflow to test:
+
+1. Visual select exactly a word or text fragment (no newlines)
+2. Press `y` to yank
+3. Type this command exactly (replace `NEW` with your replacement text):
+
+```vim
+:%s/\V<C-R>=escape(@", '/\')<CR>/NEW/g
+```
+
+4. Press Enter
+
+---
+
+Alternative: Put the yanked text into the search register and do a search and replace
+
+```vim
+" Put yanked text into search register (pattern)
+:let @/ = escape(@", '/\')
+" Then run substitute command:
+:%s//NEW/g
+```
+
+---
+
+TL;DR
+
+If your original substitution fails, try this safe approach after yanking visually:
+
+```vim
+:%s/\V<C-R>=escape(@", '/\')<CR>/REPLACETEXT/g
+```
+
+---
+
+Let me know if you want me to make a small snippet/plugin or mapping that automates this!Your command:
+
+`````
+:s%/_wildcard.mu.blog+4/wpapps/g
+```
+
+looks like an attempt to substitute text using `%` as the delimiter for the `:s` command, which is totally valid in Vim, but it is missing the replacement part (the part after the second delimiter) and also the command does not specify a range, so it defaults to the current line only.
+
+---
+
+Breakdown of your command:
+
+- `:s` — substitution command  
+- `%` — delimiter instead of the usual `/` (you can use any character like `%` or `#`)  
+- `/_wildcard.mu.blog+4` — pattern to match (includes special chars like `.`, `+`)  
+- `/` — next delimiter, so it's interpreted as the replacement part here — but since `/` is next, Vim sees an empty replacement  
+- `wpapps` — Vim thinks this is flags which is invalid (or part of replacement?) This is ambiguous.
+
+---
+
+What might be going wrong:
+
+- You're mixing the delimiter `%` and within the pattern there is a `/` character.
+- Since you used `%` as delimiter, you cannot use `/` inside the pattern literally without escaping.
+- When you choose a delimiter for `:s`, the delimiter cannot appear literally inside the pattern or replacement unless escaped.
+
+---
+
+How to fix:
+
+Since your pattern contains `/` character, pick a delimiter that doesn't appear in your pattern or replacement — let’s say `#` or `|`
+
+Then escape special regex characters like `.`, `+` if you want to match literally.
+
+---
+
+Example:
+
+You want to replace occurrences of:
+
+`/_wildcard.mu.blog+4`
+
+with
+
+`wpapps`.
+
+Try this (using `#` delimiters):
+
+```vim
+:%s#/_wildcard\.mu\.blog\+4#wpapps#g
+```
+
+Explanation:
+
+- `%s` — substitute in whole file
+- `#` — delimiter instead of `/`
+- Pattern:  
+  - `/_wildcard` — literal
+  - `.` should be escaped as `\.`
+  - `mu` literal
+  - `.` escaped as `\.`
+  - `blog`
+  - `+` is a special regex quantifier, so escape `\+` if you want literal plus sign
+  - `4`
+- Replacement: `wpapps`
+- `g` flag: replace all instances in each line
+
+---
+
+Summary:
+
+- Pick delimiter that doesn't appear in your pattern, e.g. `#` or `|`
+- Escape regex metacharacters in the pattern (`.`, `+`, etc)
+- Specify a replacement after the second delimiter
+- Add `%` range to substitute in whole file (optional)
+
+---
+
+Final working example:
+
+```vim
+:%s#/_wildcard\.mu\.blog\+4#wpapps#g
+```
+
+---
+
+If you want me to help with the exact command for your context, just say!

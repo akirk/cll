@@ -26,6 +26,7 @@ class MessageStreamer {
 		'inline_code'           => false,
 		'in_code_block'         => false,
 		'code_block_start'      => false,
+		'code_block_indent'     => '',    // stores the indentation (leading whitespace) of the opening ```
 		'maybe_code_block_end'  => false,
 		'math_buffer'           => '',
 		'math_type'             => false, // false, 'inline_paren', 'inline_dollar', 'display_bracket', 'display_dollar'
@@ -472,28 +473,42 @@ class MessageStreamer {
 			$last_php_eol = $i > 1 ? strrpos( $message, PHP_EOL, $i - $length - 1 ) : 0;
 			$is_word_delimiter = strpos( PHP_EOL . ' ,;.-_!?()[]{}:', $message[ $i ] ) !== false;
 
-			if ( $i > 1 && substr( $message, $i - 2, 3 ) === '```' && trim( substr( $message, $last_php_eol, $i - $last_php_eol - 2 ) ) === '' ) {
-				// Strip code delimiters when in ansi.
-				if ( $this->state['in_code_block'] ) {
+			// Check for closing ``` while IN a code block - must come before the in_code_block handling
+			if ( $this->state['in_code_block'] && false !== $this->state['maybe_code_block_end'] && $i > 1 && substr( $message, $i - 2, 3 ) === '```' ) {
+				// Check if the indentation matches the opening fence
+				$closing_indent = '';
+				$prev_newline_pos = strrpos( substr( $message, 0, $this->state['maybe_code_block_end'] ), PHP_EOL );
+				if ( $prev_newline_pos !== false ) {
+					$closing_indent = substr( $message, $prev_newline_pos + 1, $this->state['maybe_code_block_end'] - $prev_newline_pos - 1 );
+				} else {
+					$closing_indent = substr( $message, 0, $this->state['maybe_code_block_end'] );
+				}
+				// Only close if indentation matches
+				if ( $closing_indent === $this->state['code_block_indent'] ) {
 					if ( $this->ansi ) {
 						yield "\033[m";
-						if ( false !== $this->state['maybe_code_block_end'] ) {
-							yield substr( $message, $this->state['maybe_code_block_end'], 3 );
-							$this->state['maybe_code_block_end'] = false;
-						}
 					}
+					// Note: The indentation has already been output during the space-to-tab conversion
+					// (lines 554-565 for non-ANSI, skipped for ANSI). We only output the backticks.
+					yield substr( $message, $this->state['maybe_code_block_end'], 3 );
 					$this->state['in_code_block'] = false;
-					++$i;
-					continue;
-				} else {
-					$this->state['code_block_start'] = true;
-					if ( $this->ansi ) {
-						yield substr( $message, $i - 2, 2 );
-						yield $message[ $i ];
-					}
-					++$i;
+					$this->state['maybe_code_block_end'] = false;
+					$this->state['code_block_indent'] = '';
+					// $i is currently at the 3rd backtick (since we checked substr($message, $i-2, 3))
+					// After incrementing, $i will point to the character after the 3rd backtick
+					$i += 1;
 					continue;
 				}
+			}
+
+			// Check for opening ``` when NOT in a code block
+			if ( ! $this->state['in_code_block'] && $i > 1 && substr( $message, $i - 2, 3 ) === '```' && trim( substr( $message, $last_php_eol, $i - $last_php_eol - 2 ) ) === '' ) {
+				$this->state['code_block_start'] = true;
+				// Output the opening ```
+				yield substr( $message, $i - 2, 2 );
+				yield $message[ $i ];
+				++$i;
+				continue;
 			}
 
 			// If we're in a code block, just output the text as is
@@ -518,6 +533,46 @@ class MessageStreamer {
 					yield $message[ $i++ ];
 					continue;
 				}
+
+				// Check for closing fence - look ahead when processing spaces
+				if ( $this->state['maybe_space_to_tab'] !== false && $this->state['maybe_space_to_tab'] > 0 && $message[ $i ] === ' ' ) {
+					// We're in the middle of processing spaces - look ahead to see if ``` follows
+					$remaining_spaces = 0;
+					$j = $i;
+					while ( $j < $length && $message[ $j ] === ' ' ) {
+						$remaining_spaces++;
+						$j++;
+					}
+					// Check if after the spaces we have ```
+					if ( $j + 2 < $length && substr( $message, $j, 3 ) === '```' ) {
+						// This is a closing fence! Stop space-to-tab conversion
+						// Calculate total indentation: already processed spaces + remaining spaces
+						$total_indent = $this->state['maybe_space_to_tab'] + ( $j - $i );
+						$this->state['maybe_space_to_tab'] = false;
+
+						// In non-ANSI mode, output the total indentation before the fence
+						if ( ! $this->ansi ) {
+							if ( $total_indent > 0 ) {
+								if ( $total_indent % 2 == 0 ) {
+									yield str_repeat( "\t", $total_indent / 2 );
+								} else {
+									yield str_repeat( ' ', $total_indent );
+								}
+							}
+							// Move past all the spaces
+							$i = $j;
+						} else {
+							// In ANSI mode, skip all the indentation
+							$i = $j;
+						}
+
+						// Mark the fence start
+						$this->state['maybe_code_block_end'] = $i;
+						++$i;
+						continue;
+					}
+				}
+
 				if ( $this->state['maybe_space_to_tab'] !== false ) {
 					if ( $message[ $i ] === ' ' ) {
 						++$i;
@@ -538,14 +593,36 @@ class MessageStreamer {
 					}
 				}
 				$this->state['maybe_space_to_tab'] = false;
-				if ( false === $this->state['maybe_code_block_end'] && $message[ $i ] === '`' && trim( substr( $message, $last_php_eol, $i - $last_php_eol - 1 ) ) === '' ) {
-					$this->state['maybe_code_block_end'] = $i;
+				// Detect closing ``` - the first backtick must be at start of line (with possible indentation)
+				if ( false === $this->state['maybe_code_block_end'] && $message[ $i ] === '`' ) {
+					// Check if we're at start of line, allowing for indentation
+					$at_line_start = ( $i === 0 || $message[ $i - 1 ] === PHP_EOL );
+					if ( ! $at_line_start && $i > 0 ) {
+						// Check if everything from last newline to here is whitespace
+						$prev_newline_pos = strrpos( substr( $message, 0, $i ), PHP_EOL );
+						if ( $prev_newline_pos !== false ) {
+							$line_content = substr( $message, $prev_newline_pos + 1, $i - $prev_newline_pos - 1 );
+							$at_line_start = ( trim( $line_content ) === '' );
+						}
+					}
+					if ( $at_line_start ) {
+						$this->state['maybe_code_block_end'] = $i;
+						++$i;
+						continue;
+					}
+				}
+				// Detect second backtick of closing ```
+				if ( false !== $this->state['maybe_code_block_end'] && substr( $message, $i - 1, 2 ) === '``' ) {
 					++$i;
 					continue;
 				}
-				if ( false !== $this->state['maybe_code_block_end'] && substr( $message, $i - 1, 2 ) === '``' && trim( substr( $message, $last_php_eol, $i - $last_php_eol - 2 ) ) === '' ) {
-					++$i;
-					continue;
+				// Reset maybe_code_block_end if we see something other than a backtick
+				if ( false !== $this->state['maybe_code_block_end'] && $message[ $i ] !== '`' ) {
+					// Output the buffered backtick(s) and reset
+					for ( $j = $this->state['maybe_code_block_end']; $j < $i; $j++ ) {
+						yield $message[ $j ];
+					}
+					$this->state['maybe_code_block_end'] = false;
 				}
 				yield $message[ $i++ ];
 				continue;
@@ -698,8 +775,8 @@ class MessageStreamer {
 				}
 			}
 
-			// Process bold and headline markers only outside code blocks
-			if ( $message[ $i ] === '*' ) {
+			// Process bold and headline markers only outside code blocks and inline code
+			if ( $message[ $i ] === '*' && ! $this->state['inline_code'] ) {
 				// The second *.
 				if ( $this->state['maybe_bold'] ) {
 					$this->state['bold'] = ! $this->state['bold'];
@@ -722,7 +799,7 @@ class MessageStreamer {
 				}
 				++$i; // Move past the bold indicator
 				continue;
-			} elseif ( $this->state['maybe_bold'] ) {
+			} elseif ( $this->state['maybe_bold'] && ! $this->state['inline_code'] ) {
 				// No second *.
 				$this->state['maybe_bold'] = false;
 				// This might become an underline if we find another * before a word separator.
@@ -733,7 +810,7 @@ class MessageStreamer {
 					continue;
 				}
 				--$i;
-			} elseif ( false !== $this->state['maybe_underline'] ) {
+			} elseif ( false !== $this->state['maybe_underline'] && ! $this->state['inline_code'] ) {
 				if ( ! $is_word_delimiter ) {
 					// buffer
 					++$i;
@@ -752,8 +829,8 @@ class MessageStreamer {
 				$this->state['maybe_underline_words'] = 0;
 			}
 
-			// Process bold and headline markers only outside code blocks
-			if ( $i > 1 && substr( $message, $i - 1, 2 ) === '**' && substr( $message, $i - 2, 1 ) === PHP_EOL ) {
+			// Process bold and headline markers only outside code blocks and inline code
+			if ( $i > 1 && substr( $message, $i - 1, 2 ) === '**' && substr( $message, $i - 2, 1 ) === PHP_EOL && ! $this->state['inline_code'] ) {
 				$this->state['bold'] = ! $this->state['bold'];
 				if ( $this->ansi ) {
 					yield $this->state['bold'] ? "\033[1m" : "\033[m";
@@ -762,10 +839,54 @@ class MessageStreamer {
 				continue;
 			}
 
-			if ( substr( $message, $i, 1 ) === '`' && ! $this->state['math_type'] ) {
+			// Check for ` but not ``` (code block marker)
+			// Look ahead to see if this is the start of a code block
+			if ( substr( $message, $i, 1 ) === '`' && ! $this->state['math_type'] && ! $this->state['in_code_block'] && ! $this->state['code_block_start'] ) {
+				// If this might be a code block (``` at start of line), handle it specially
+				if ( $i + 2 < $length && substr( $message, $i, 3 ) === '```' ) {
+
+					// Check if we're at start of line (allowing leading whitespace)
+					$line_start = ( $i === 0 || $message[ $i - 1 ] === PHP_EOL );
+					if ( ! $line_start && $i > 0 ) {
+						// Check if everything from last newline to here is whitespace
+						$prev_newline_pos = strrpos( substr( $message, 0, $i ), PHP_EOL );
+						if ( $prev_newline_pos !== false ) {
+							$line_content = substr( $message, $prev_newline_pos + 1, $i - $prev_newline_pos - 1 );
+							$line_start = trim( $line_content ) === '';
+						}
+					}
+
+					if ( $line_start ) {
+						// This is a code block start - handle it here
+						// Store the indentation (everything from last newline to the first backtick)
+						$prev_newline_pos = strrpos( substr( $message, 0, $i ), PHP_EOL );
+						if ( $prev_newline_pos !== false ) {
+							$this->state['code_block_indent'] = substr( $message, $prev_newline_pos + 1, $i - $prev_newline_pos - 1 );
+						} else {
+							$this->state['code_block_indent'] = substr( $message, 0, $i );
+						}
+
+						$this->state['code_block_start'] = true;
+
+						// Output the opening fence
+						// Note: In non-ANSI mode, the indentation has already been output as we processed
+						// the characters before the backticks, so we only output the backticks themselves
+						yield $message[ $i ];
+						yield $message[ $i + 1 ];
+						yield $message[ $i + 2 ];
+
+						$i += 3;
+						continue;
+					}
+				}
+
+				// Not a code block, treat as inline code
 				$this->state['inline_code'] = ! $this->state['inline_code'];
 				if ( $this->ansi ) {
 					yield $this->state['inline_code'] ? "\033[34m" : "\033[m";
+				} else {
+					// In non-ANSI mode, output the backtick to preserve inline code markers
+					yield $message[ $i ];
 				}
 				++$i;
 				continue;

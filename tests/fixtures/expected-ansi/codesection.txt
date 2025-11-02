@@ -1,6 +1,6 @@
 To ensure [1monly[m the two keys [34m"blogname"[m and [34m"blogdescription"[m are accepted when processing the options, you can add a whitelist check before calling [34mupdate_option[m. Here's how you can modify your code:
 
-[34m[m```php
+```php
 [90m$allowed_keys = ['blogname', 'blogdescription'];
 
 $blueprint = json_decode('{
@@ -44,7 +44,7 @@ This approach allows your code to safely accept only those two keys when updatin
 
 Here's how you can do it with your example:
 
-[34m[m```php
+```php
 [90m$allowed_keys = ['blogname' => true, 'blogdescription' => true];
 
 $blueprint = json_decode('{
