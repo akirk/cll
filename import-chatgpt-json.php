@@ -48,6 +48,14 @@ class ExternalConversationImporter {
 				return;
 			}
 
+			// Check if this conversation already exists
+			$existingConversationId = $this->findExistingConversation( $messages, $created_at );
+
+			if ( $existingConversationId ) {
+				$this->appendToConversation( $existingConversationId, $name, $messages, $dryRun );
+				return;
+			}
+
 			// Determine model from messages or use default
 			$detectedModel = $this->detectModel( $messages );
 			$model = $this->defaultModel ? $this->defaultModel : $detectedModel;
@@ -102,6 +110,98 @@ class ExternalConversationImporter {
 			echo "❌ Error importing {$name}: " . $e->getMessage() . "\n";
 			++$this->errors;
 		}
+	}
+
+	private function findExistingConversation( $messages, $created_at ) {
+		if ( empty( $messages ) ) {
+			return null;
+		}
+
+		$firstUserMessage = null;
+		foreach ( $messages as $msg ) {
+			if ( ( $msg['sender'] ?? '' ) === 'human' ) {
+				$firstUserMessage = $this->extractContent( $msg );
+				break;
+			}
+		}
+
+		if ( ! $firstUserMessage ) {
+			return null;
+		}
+
+		$db = $this->sqliteStorage->getDatabase();
+		$stmt = $db->prepare(
+			"
+			SELECT c.id, COUNT(m.id) as message_count
+			FROM conversations c
+			INNER JOIN messages m ON c.id = m.conversation_id
+			WHERE c.created_at = ?
+			AND EXISTS (
+				SELECT 1 FROM messages
+				WHERE conversation_id = c.id
+				AND role = 'user'
+				AND content = ?
+				LIMIT 1
+			)
+			GROUP BY c.id
+			ORDER BY c.created_at DESC
+			LIMIT 1
+			"
+		);
+		$stmt->execute( array( $created_at, $firstUserMessage ) );
+		$result = $stmt->fetch( PDO::FETCH_ASSOC );
+
+		if ( $result ) {
+			return array(
+				'id' => $result['id'],
+				'message_count' => $result['message_count'],
+			);
+		}
+
+		return null;
+	}
+
+	private function appendToConversation( $existingConversation, $name, $messages, $dryRun ) {
+		$conversationId = $existingConversation['id'];
+		$existingMessageCount = $existingConversation['message_count'];
+		$newMessageCount = count( $messages );
+
+		if ( $newMessageCount <= $existingMessageCount ) {
+			echo "⏭️  Skipping: ID {$conversationId} - {$name} (no new messages: {$existingMessageCount} existing, {$newMessageCount} in import)\n";
+			++$this->skipped;
+			return;
+		}
+
+		$messagesToAppend = $newMessageCount - $existingMessageCount;
+
+		if ( $dryRun ) {
+			echo "📄 Would append {$messagesToAppend} messages to: ID {$conversationId} - {$name} ({$existingMessageCount} existing → {$newMessageCount} total)\n";
+			++$this->imported;
+			return;
+		}
+
+		$appendedCount = 0;
+		for ( $i = $existingMessageCount; $i < $newMessageCount; $i++ ) {
+			$msg = $messages[ $i ];
+			$sender = $msg['sender'] ?? 'unknown';
+			$content = $this->extractContent( $msg );
+			$timestamp = isset( $msg['created_at'] ) ? strtotime( $msg['created_at'] ) : time();
+
+			if ( empty( $content ) ) {
+				continue;
+			}
+
+			if ( $sender === 'human' ) {
+				$this->sqliteStorage->writeUserMessage( $conversationId, $content, $timestamp );
+				++$appendedCount;
+			} elseif ( $sender === 'assistant' ) {
+				$this->sqliteStorage->writeAssistantMessage( $conversationId, $content, $timestamp );
+				++$appendedCount;
+			}
+		}
+
+		echo "➕ Appended {$appendedCount} messages to: ID {$conversationId} - {$name} ({$existingMessageCount} → " . ( $existingMessageCount + $appendedCount ) . " messages)\n";
+		++$this->imported;
 	}
 
 	private function extractContent( $message ) {

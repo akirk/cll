@@ -82,6 +82,10 @@ class SQLiteLogStorage extends LogStorage {
 		$this->initializeDatabase();
 	}
 
+	public function getDatabase() {
+		return $this->db;
+	}
+
 	private function initializeDatabase() {
 		$this->db = new PDO( 'sqlite:' . $this->dbPath );
 		$this->db->setAttribute( PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION );
