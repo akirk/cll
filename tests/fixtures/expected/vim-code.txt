@@ -4,7 +4,7 @@ Here’s how you can do it step-by-step:
 
 ---
 
-Scenario: Replace all instances of a visually selected text
+### Scenario: Replace all instances of a visually selected text
 
 1. Select text in visual mode  
    Position your cursor at the start of the text you want to change.  
@@ -35,7 +35,7 @@ Scenario: Replace all instances of a visually selected text
 
 ---
 
-Example
+### Example
 
 - Visually select the word `foo` somewhere in the file and yank it (`y`).
 - Run command:  
@@ -46,7 +46,7 @@ Example
 
 ---
 
-Bonus: Mapping it to a command
+### Bonus: Mapping it to a command
 
 You can create a shortcut if you often do this. For example, put this in your `.vimrc` to prompt for replacement on selected text:
 
@@ -61,7 +61,7 @@ Usage:
 
 ---
 
-Summary
+### Summary
 
 - Use visual mode + `y` to copy text  
 - Use `:%s/<C-R>"/replacement/g` to replace all occurrence of the selected text with your new text
@@ -75,11 +75,11 @@ If you want true multicursor support, Vim has some plugins like:
 
 But for quick replacements, the visual yank + `:s` command works well.If the substitution command can't find the pattern after you yank the visual selection, there are several common reasons why it might fail, mainly due to how special characters and newlines in the visual selection are handled in the substitute pattern.
 
-Common issues and solutions:
+### Common issues and solutions:
 
 ---
 
-1. The selected text may include special regex characters, which need to be escaped
+### 1. The selected text may include special regex characters, which need to be escaped
 
 For example, if your selection contains `.`, `*`, `\`, `/`, `^`, `$` etc., the substitute command interprets these as regex metacharacters.
 
@@ -110,7 +110,7 @@ Try this exact command:
 
 ---
 
-2. The visual selection may include extra characters like newline
+### 2. The visual selection may include extra characters like newline
 
 If you selected multiple lines visually and yanked, the register might include newline characters which don't work well as a substitution pattern.
 
@@ -126,7 +126,7 @@ Solution:
 
 ---
 
-3. You may need to define the pattern as a literal string
+### 3. You may need to define the pattern as a literal string
 
 The safest method is:
 
@@ -142,7 +142,7 @@ or if you use `/` as a delimiter and might have slashes in your text, escape `/`
 
 ---
 
-Example Workflow to test:
+### Example Workflow to test:
 
 1. Visual select exactly a word or text fragment (no newlines)
 2. Press `y` to yank
@@ -156,7 +156,7 @@ Example Workflow to test:
 
 ---
 
-Alternative: Put the yanked text into the search register and do a search and replace
+### Alternative: Put the yanked text into the search register and do a search and replace
 
 ```vim
 " Put yanked text into search register (pattern)
@@ -167,7 +167,7 @@ Alternative: Put the yanked text into the search register and do a search and re
 
 ---
 
-TL;DR
+### TL;DR
 
 If your original substitution fails, try this safe approach after yanking visually:
 
@@ -187,7 +187,7 @@ looks like an attempt to substitute text using `%` as the delimiter for the `:s`
 
 ---
 
-Breakdown of your command:
+### Breakdown of your command:
 
 - `:s` — substitution command  
 - `%` — delimiter instead of the usual `/` (you can use any character like `%` or `#`)  
@@ -197,7 +197,7 @@ Breakdown of your command:
 
 ---
 
-What might be going wrong:
+### What might be going wrong:
 
 - You're mixing the delimiter `%` and within the pattern there is a `/` character.
 - Since you used `%` as delimiter, you cannot use `/` inside the pattern literally without escaping.
@@ -205,7 +205,7 @@ What might be going wrong:
 
 ---
 
-How to fix:
+### How to fix:
 
 Since your pattern contains `/` character, pick a delimiter that doesn't appear in your pattern or replacement — let’s say `#` or `|`
 
@@ -213,7 +213,7 @@ Then escape special regex characters like `.`, `+` if you want to match literall
 
 ---
 
-Example:
+### Example:
 
 You want to replace occurrences of:
 
@@ -246,7 +246,7 @@ Explanation:
 
 ---
 
-Summary:
+### Summary:
 
 - Pick delimiter that doesn't appear in your pattern, e.g. `#` or `|`
 - Escape regex metacharacters in the pattern (`.`, `+`, etc)
@@ -255,7 +255,7 @@ Summary:
 
 ---
 
-Final working example:
+### Final working example:
 
 ```vim
 :%s#/_wildcard\.mu\.blog\+4#wpapps#g

@@ -26,7 +26,7 @@ In tmux, you cannot directly split a view across two different windows because e
 
 ---
 
-Summary
+### Summary
 
 - You cannot split a view directly between two separate windows, but you can split a single window into multiple panes.
 - If you want to see what’s in two different windows side by side, you can move panes between windows to have both inside one window.

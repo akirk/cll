@@ -4,7 +4,7 @@ Hier sind einige Ideen für ein einfaches, österreichisches Abendessen, das nic
 
 ---
 
-## 🍽️ 1. Käsespätzle mit Gemüse-Schaum  
+### 🍽️ 1. Käsespätzle mit Gemüse-Schaum  
 Zutaten:  
 - Spätzle (oder Nudeln)  
 - Käse (z. B. Bergkäse oder Frischkäse)  
@@ -21,7 +21,7 @@ Tipp: Zieht einen Schuss Weißwein oder einen Schuss Apfelwein über die Pfanne,
 
 ---
 
-## 🥗 2. Gemüsepfanne mit Kräuterquark-Kruste  
+### 🥗 2. Gemüsepfanne mit Kräuterquark-Kruste  
 Zutaten:  
 - Zucchini, Paprika, Zwiebeln, Karotten, Pilze  
 - Olivenöl, Salz, Pfeffer, Muskat  
@@ -34,7 +34,7 @@ Zubereitung:
 
 ---
 
-## 🍝 3. Vegetarische Gulasch-Gemüsepfanne  
+### 🍝 3. Vegetarische Gulasch-Gemüsepfanne  
 Zutaten:  
 - Zwiebeln, Knoblauch, Kartoffeln, Karotten, Zucchini, Paprika  
 - Olivenöl, Salz, Pfeffer, Muskat  
@@ -47,7 +47,7 @@ Zub,erit:
 
 ---
 
-## 🥣 4. Zwiebelkuchen mit Kartoffelsalat  
+### 🥣 4. Zwiebelkuchen mit Kartoffelsalat  
 Zutaten:  
 - Zwiebeln (in Scheiben), Butter, Salz, Pfeffer, Muskat  
 - Kartoffeln (gekocht und püriert), Essig, Öl, Schnittlauch  
@@ -59,7 +59,7 @@ Zubereitung:
 
 ---
 
-## 🥕 5. Bärlauch-Pfanne mit Kartoffeln  
+### 🥕 5. Bärlauch-Pfanne mit Kartoffeln  
 Zutaten:  
 - Bärlauch (z. B. frisch oder konserviert), Zwiebeln, Kartoffeln, Schlagsahne, Butter  
 
@@ -70,14 +70,14 @@ Zubereitung:
 
 ---
 
-## 🧂 Zusätzliche Ideen für einfachen Beilage:  
+### 🧂 Zusätzliche Ideen für einfachen Beilage:  
 - Schlutzkrapfen (Kartoffelkäse-Snack)  
 - Tafelspätzle mit Zwiebelwürfel und Butter  
 - Pfifferlinge mit Kartoffeln (scharf anbraten und im Ofen backen)  
 
 ---
 
-## 🍷 Empfohlene Getränke:  
+### 🍷 Empfohlene Getränke:  
 - Weißwein (z. B. Gumpoldskirchner oder Pfälzer)  
 - Apfelwein oder selbstgemachter Rote Beete-Saft (zu den Gemüsegerichten)  
 

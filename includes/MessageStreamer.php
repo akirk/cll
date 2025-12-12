@@ -22,6 +22,7 @@ class MessageStreamer {
 		'maybe_space_to_tab'    => false,
 		'bold'                  => false,
 		'headline'              => false,
+		'headline_prefix'       => false,  // true when skipping ### prefix across token boundaries
 		'trimnext'              => false,
 		'inline_code'           => false,
 		'in_code_block'         => false,
@@ -933,17 +934,33 @@ class MessageStreamer {
 				$this->state['trimnext'] = false;
 			}
 
+			// Continue skipping headline prefix (### ) across token boundaries (ANSI mode only)
+			if ( $this->ansi && $this->state['headline_prefix'] ) {
+				if ( $message[ $i ] === '#' || $message[ $i ] === ' ' ) {
+					++$i;
+					continue;
+				}
+				$this->state['headline_prefix'] = false;
+			}
+
 			if ( substr( $message, $i, 1 ) === '#' && ( substr( $message, $i - 1, 1 ) === PHP_EOL || ! $i ) ) {
 				// Start of a headline
 				$this->state['headline'] = true;
 				$this->state['trimnext'] = true;
 				if ( $this->ansi ) {
 					yield "\033[4m";
+					$this->state['headline_prefix'] = true;
+					while ( $i < $length && ( $message[ $i ] === '#' || $message[ $i ] === ' ' ) ) {
+						++$i;
+					}
+					// If we consumed the entire token, we may need to continue in the next token
+					if ( $i >= $length ) {
+						continue;
+					}
+					$this->state['headline_prefix'] = false;
+					continue;
 				}
-				while ( $i < $length && ( $message[ $i ] === '#' || $message[ $i ] === ' ' ) ) {
-					++$i;
-				}
-				continue;
+				// In non-ANSI mode, output the # and continue processing
 			}
 
 			// Reset states on new lines
