@@ -1392,13 +1392,14 @@ while ( true ) {
 
 	// Check for single-word input that isn't a known command or common word
 	$trimmedInput = trim( $input );
-	$wordCount = str_word_count( $trimmedInput );
+	$words = preg_split( '/\s+/', $trimmedInput, -1, PREG_SPLIT_NO_EMPTY );
+	$wordCount = count( $words );
 	$commonWords = array( 'yes', 'no', 'ok', 'okay', 'sure', 'thanks', 'please', 'why', 'how', 'what', 'when', 'where', 'who' );
 
 	if ( $wordCount === 1 && ! in_array( strtolower( $trimmedInput ), $commonWords ) ) {
-		echo "\033[33mSend single word '{$trimmedInput}' to the LLM? (y/n): \033[m";
-		$confirm = trim( fgets( STDIN ) );
-		if ( strtolower( $confirm ) !== 'y' && strtolower( $confirm ) !== 'yes' ) {
+		echo "\033[33mSend single word '{$trimmedInput}' to the LLM? (Y/n): \033[m";
+		$confirm = strtolower( trim( fgets( STDIN ) ) );
+		if ( $confirm === 'n' || $confirm === 'no' ) {
 			continue;
 		}
 	}

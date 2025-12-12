@@ -7,6 +7,7 @@ class MessageStreamer {
 	private array $chunks = array();
 	private $logStorage = null;
 	private bool $show_thinking = false;
+	private $debug_tokens_file = null;
 	private bool $in_thinking = false;
 	private string $thinking_content = '';
 	private int $spinner_state = 0;
@@ -30,6 +31,8 @@ class MessageStreamer {
 		'code_block_indent'     => '',    // stores the indentation (leading whitespace) of the opening ```
 		'maybe_code_block_end'  => false,
 		'closing_fence_indent'  => '',    // stores the indentation detected for a potential closing fence
+		'pending_fence'         => '',    // stores partial ``` when split across tokens (e.g., "  `" then "``bash")
+		'pending_fence_indent'  => '',    // stores the indentation before the pending fence
 		'math_buffer'           => '',
 		'math_type'             => false, // false, 'inline_paren', 'inline_dollar', 'display_bracket', 'display_dollar'
 		'math_start_pos'        => 0,
@@ -188,6 +191,10 @@ class MessageStreamer {
 
 	public function setShowThinking( bool $show ): void {
 		$this->show_thinking = $show;
+	}
+
+	public function setDebugTokens( string $file_path ): void {
+		$this->debug_tokens_file = fopen( $file_path, 'w' );
 	}
 
 	public function startThinking(): void {
@@ -391,6 +398,9 @@ class MessageStreamer {
 					} elseif ( isset( $json['type'] ) && $json['type'] === 'content_block_stop' && $this->in_thinking ) {
 						$this->endThinking();
 					} elseif ( isset( $json['delta']['text'] ) ) {
+						if ( $this->debug_tokens_file ) {
+							fwrite( $this->debug_tokens_file, json_encode( $json['delta']['text'] ) . PHP_EOL );
+						}
 						foreach ( $this->outputMessage( $json['delta']['text'] ) as $output ) {
 							echo $output;
 						}
@@ -422,6 +432,9 @@ class MessageStreamer {
 
 						// Only output non-empty content
 						if ( ! empty( $content ) ) {
+							if ( $this->debug_tokens_file ) {
+								fwrite( $this->debug_tokens_file, json_encode( $content ) . PHP_EOL );
+							}
 							foreach ( $this->outputMessage( $content ) as $output ) {
 								echo $output;
 							}
@@ -469,6 +482,42 @@ class MessageStreamer {
 		$i = strlen( $this->old_message );
 		$this->old_message = $message;
 		$length = strlen( $message );
+
+		// Handle pending fence from previous token
+		if ( $this->state['pending_fence'] !== '' ) {
+			$pending = $this->state['pending_fence'];
+			$pending_indent = $this->state['pending_fence_indent'];
+			$this->state['pending_fence'] = '';
+			$this->state['pending_fence_indent'] = '';
+
+			// The pending fence content is already in $message (as part of old_message)
+			// $i points to the start of new content, so pending starts at $i - strlen($pending)
+			$fence_start = $i - strlen( $pending );
+
+			// Check if we now have enough characters to see if it's a full ``` fence
+			if ( $fence_start + 3 <= $length ) {
+				// Check if this is a ``` fence
+				if ( substr( $message, $fence_start, 3 ) === '```' ) {
+					// This is a code block start
+					$this->state['code_block_indent'] = $pending_indent;
+					$this->state['code_block_start'] = true;
+
+					// Output the opening fence
+					yield '```';
+
+					// Move past the fence (fence_start + 3)
+					$i = $fence_start + 3;
+				} else {
+					// Not a code block, go back and process from fence_start as normal
+					$i = $fence_start;
+				}
+			} else {
+				// Still not enough characters, keep buffering
+				$this->state['pending_fence'] = substr( $message, $fence_start );
+				$this->state['pending_fence_indent'] = $pending_indent;
+				return;
+			}
+		}
 
 		while ( $i < $length ) {
 			// Check for the start of a code block
@@ -876,20 +925,33 @@ class MessageStreamer {
 			// Check for ` but not ``` (code block marker)
 			// Look ahead to see if this is the start of a code block
 			if ( substr( $message, $i, 1 ) === '`' && ! $this->state['math_type'] && ! $this->state['in_code_block'] && ! $this->state['code_block_start'] ) {
+				// Check if we're at start of line (allowing leading whitespace)
+				$line_start = ( $i === 0 || $message[ $i - 1 ] === PHP_EOL );
+				if ( ! $line_start && $i > 0 ) {
+					// Check if everything from last newline to here is whitespace
+					$prev_newline_pos = strrpos( substr( $message, 0, $i ), PHP_EOL );
+					if ( $prev_newline_pos !== false ) {
+						$line_content = substr( $message, $prev_newline_pos + 1, $i - $prev_newline_pos - 1 );
+						$line_start = trim( $line_content ) === '';
+					}
+				}
+
+				// If at start of line and we can't see 3 characters ahead, buffer for next token
+				if ( $line_start && $i + 2 >= $length ) {
+					// Store the pending backticks and indentation
+					$this->state['pending_fence'] = substr( $message, $i );
+					$prev_newline_pos = strrpos( substr( $message, 0, $i ), PHP_EOL );
+					if ( $prev_newline_pos !== false ) {
+						$this->state['pending_fence_indent'] = substr( $message, $prev_newline_pos + 1, $i - $prev_newline_pos - 1 );
+					} else {
+						$this->state['pending_fence_indent'] = substr( $message, 0, $i );
+					}
+					// Don't output anything, wait for next token
+					break;
+				}
+
 				// If this might be a code block (``` at start of line), handle it specially
 				if ( $i + 2 < $length && substr( $message, $i, 3 ) === '```' ) {
-
-					// Check if we're at start of line (allowing leading whitespace)
-					$line_start = ( $i === 0 || $message[ $i - 1 ] === PHP_EOL );
-					if ( ! $line_start && $i > 0 ) {
-						// Check if everything from last newline to here is whitespace
-						$prev_newline_pos = strrpos( substr( $message, 0, $i ), PHP_EOL );
-						if ( $prev_newline_pos !== false ) {
-							$line_content = substr( $message, $prev_newline_pos + 1, $i - $prev_newline_pos - 1 );
-							$line_start = trim( $line_content ) === '';
-						}
-					}
-
 					if ( $line_start ) {
 						// This is a code block start - handle it here
 						// Store the indentation (everything from last newline to the first backtick)
