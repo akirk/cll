@@ -22,6 +22,8 @@ while ( $i < count( $_SERVER['argv'] ) ) {
 		$options['show-thinking'] = true;
 	} elseif ( '--offline' === $arg ) {
 		$options['offline'] = true;
+	} elseif ( preg_match( '/^--debug-tokens(?:=(.+))?$/', $arg, $debugMatch ) ) {
+		$options['debug-tokens'] = isset( $debugMatch[1] ) ? $debugMatch[1] : 'tokens.log';
 	} elseif ( preg_match( '/^-([a-z]+)$/i', $arg, $matches ) ) {
 		$flags = str_split( $matches[1] );
 		foreach ( $flags as $flag ) {
@@ -148,6 +150,9 @@ if ( isset( $options['n'] ) ) {
 $messageStreamer = new MessageStreamer( $ansi, $logStorage );
 if ( isset( $options['t'] ) || isset( $options['show-thinking'] ) ) {
 	$messageStreamer->setShowThinking( true );
+}
+if ( isset( $options['debug-tokens'] ) ) {
+	$messageStreamer->setDebugTokens( true );
 }
 
 // Initialize ApiClient with logStorage for SQLite model/pricing support
@@ -414,6 +419,7 @@ Options:
   -t, --show-thinking  Show thinking process for reasoning models (o1, o3, Claude with thinking).
   -n                   Don't save conversation to database (private mode).
   -o, --offline        Force offline mode (use local Ollama models only).
+  --debug-tokens[=file] Write raw tokens to file as they arrive (default: tokens.log).
 
 Arguments:
   conversation_input  Input for the first conversation.
@@ -927,39 +933,9 @@ $api_call_count = 0;
 $chunk_overflow = '';
 // The curl write function will be set after MessageStreamer is created
 
-// Set up signal handling for Ctrl-C to properly cancel multiline input
-$interrupted = false;
-if ( function_exists( 'pcntl_signal' ) && function_exists( 'pcntl_async_signals' ) ) {
-	pcntl_async_signals( true );
-	pcntl_signal(
-		SIGINT,
-		function ( $signo ) use ( &$interrupted, &$multiline ) {
-			global $ansi;
-			$interrupted = true;
-			if ( false !== $multiline ) {
-				if ( $ansi ) {
-					echo "\n\033[33mMultiline input cancelled.\033[m\n";
-				} else {
-					echo "\nMultiline input cancelled.\n";
-				}
-				$multiline = false;
-			}
-		}
-	);
-}
-
 // Start chatting.
 $multiline = false;
 while ( true ) {
-	if ( $interrupted ) {
-		$interrupted = false;
-		if ( false === $multiline ) {
-			echo PHP_EOL;
-			break;
-		}
-		continue;
-	}
-
 	if ( ! empty( $initial_input ) ) {
 		$input = $initial_input;
 		$initial_input = null;
@@ -968,14 +944,6 @@ while ( true ) {
 	} else {
 		$input = readline( '> ' );
 		if ( false === $input ) {
-			if ( $interrupted ) {
-				$interrupted = false;
-				if ( false === $multiline ) {
-					echo PHP_EOL;
-					break;
-				}
-				continue;
-			}
 			break;
 		}
 	}
