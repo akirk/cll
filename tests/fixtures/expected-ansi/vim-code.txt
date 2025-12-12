@@ -179,7 +179,7 @@ If your original substitution fails, try this safe approach after yanking visual
 
 Let me know if you want me to make a small snippet/plugin or mapping that automates this!Your command:
 
-[34m[m```
+```
 [90m:s%/_wildcard.mu.blog+4/wpapps/g
 [m```
 

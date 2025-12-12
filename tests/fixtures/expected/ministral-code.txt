@@ -1,0 +1,95 @@
+If your QNAP NAS is reachable via SMB (File Sharing) but not via the web interface or SSH, it could be due to several networking or configuration issues. Here’s a step-by-step troubleshooting guide:
+
+---
+
+### 1. Check Basic Connectivity
+- Test if the NAS responds to ICMP (ping):
+  Open a terminal/command prompt and ping the NAS’s IP (e.g., `ping 192.168.1.x`).
+  - If unblocked → ICMP (ping) is working (good).
+  - If blocked → Check firewall rules or router settings.
+
+- Verify firewall/surge protector:
+  Ensure the NAS is plugged in directly or via a non-UPS-controlled outlet if using surge protectors.
+
+---
+
+### 2. Check Network Settings on the NAS
+Log in via SMB (or re-IP if needed) and inspect these settings:
+1. Go to Control Panel > Network > Network Settings.
+2. Verify:
+   - Interface: Correct network (Lan1/Lan2/Wi-Fi).
+   - IP Address: Assigned manually or via DHCP.
+   - Gateway/DNS: Match your router’s settings.
+3. Test re-pinging after changes.
+
+---
+
+### 3. Port Conflicts (Web/SSH Blocked)
+The web interface and SSH rely on ports 8 (HTTP), 443 (HTTPS), and 22 (SSH) being open.
+
+#### Check Port Availability Locally
+- Use QNAP Admin Tool (install via `Control Panel > Task Scheduler`):
+  - Run a basic HTTP/SSH test (e.g., telnet to port 22 or 80).
+  - Alternatively, test via:
+    ```bash
+		telnet <NAS_IP> 80  # Check HTTP
+		telnet <NAS_IP> 443 # Check HTTPS
+		telnet <NAS_IP> 22  # Check SSH
+		```
+    *(Replace `telnet` with `nc` if unavailable on Windows.)*
+
+- If the ports show `Connection refused`, proceed to Step 4.
+
+---
+
+### 4. Disable Firewall or Adjust QNAP Port Forwarding
+1. QNAP Firewall (if enabled):
+   - Go to Control Panel > Security > Firewall
+   - Check if Local Port Forwarding or IP Filter is blocking ports.
+   - Ensure Allow Local Network Access is checked.
+
+2. QNAP Port Triggering (for SSH/HTTP):
+   - Install Port Triggering app (if available).
+   - Forward UDP 22, 255 (SSH) to your NAS.
+
+3. Router Port Forwarding:
+   - If behind a NAT router, forward:
+     - Port 80 (HTTP) + Port 443 (HTTPS) → NAS IP
+     - Port 22 (SSH) + Port 2055 (SSH2) → NAS IP
+     - Enable UPnP or set static port mapping in the router.
+
+---
+
+### 5. Reset Web/Portal Configuration
+1. Clear Browser Cache/DNS Records:
+   - Run `ipconfig /flushdns` (Windows) or `sudo dscacheutil -flushcache` (Mac).
+   - Use InPrivate Mode or Chrome Incognito to avoid cache issues.
+
+2. Reinstall QNAP Ports:
+   - Go to Control Panel > Task Scheduler > Predefined Tasks > Ports and reinstall:
+     - QuWizard
+     - SSH
+     - HTTPS (if disabled)
+
+3. Reset NAS to Factory Defaults:
+   - Backup data first!
+   - Go to Settings > System > Restore Default.
+
+---
+
+### 6. Advanced Checks
+- Check for QNAP QTS Updates:
+  - Go to Control Panel > System Task > Regular Maintenance.
+  - Install any pending updates.
+
+- Review Event Logs for Errors:
+  - Go to System Log under QuWizard logs for port-related errors.
+
+- Inspect DNS Resolution:
+  Run `nslookup <NAS_IP>` and test URL access (e.g., http://qnap.local or your-QDS-name.local).
+
+---
+
+### Final Notes
+- If SMB is working but not web/SSH, the issue is likely firewall/port-related.
+- Ensure your local network (WiFi/Ethernet) isn’t experiencing MAC 
