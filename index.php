@@ -57,7 +57,6 @@ if ( isset( $_GET['api'] ) && $_GET['api'] === 'config' ) {
 	curl_setopt( $ch, CURLOPT_RETURNTRANSFER, 1 );
 	curl_setopt( $ch, CURLOPT_TIMEOUT, 2 );
 	$ollamaModels = json_decode( curl_exec( $ch ), true );
-	curl_close( $ch );
 
 	if ( isset( $ollamaModels['models'] ) ) {
 		foreach ( $ollamaModels['models'] as $m ) {
@@ -463,7 +462,8 @@ function renderConversationItem( $storage, $id ) {
 		.tag-form button { padding: 6px 10px; background: #007cba; color: white; border: none; border-radius: 3px; cursor: pointer; }
 		.tag-form button:hover { background: #005a8b; }
 		.conversation-link { display: inline-block; padding: 6px 12px; background: #007cba; color: white; text-decoration: none; border-radius: 4px; }
-		.message { margin-bottom: 20px; padding: 15px; border-radius: 6px; }
+		.messages { width: 70%; margin: 4em auto; }
+		.message { font-family: Georgia, Times New Roman, Times, serif; margin-bottom: 20px; padding: 15px; border-radius: 6px; }
 		.message.user { background: #e3f2fd; border-left: 4px solid #2196f3; }
 		.message.user .message-content pre { max-height: 10em; overflow: auto; }
 		.message.assistant { background: #f3e5f5; border-left: 4px solid #9c27b0; }

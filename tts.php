@@ -197,7 +197,6 @@ if ( curl_errno( $ch ) ) {
 	echo 'Error: ', curl_error( $ch ), PHP_EOL;
 	exit( 1 );
 }
-curl_close( $ch );
 
 $response = json_decode( $response );
 var_dump( $response );

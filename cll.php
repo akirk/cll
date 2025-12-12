@@ -25,7 +25,7 @@ while ( $i < count( $_SERVER['argv'] ) ) {
 	} elseif ( preg_match( '/^-([a-z]+)$/i', $arg, $matches ) ) {
 		$flags = str_split( $matches[1] );
 		foreach ( $flags as $flag ) {
-			if ( in_array( $flag, array( 'd', 'l', 'v', 'h', 'f', 'n', 't', 'o' ) ) ) {
+			if ( in_array( $flag, array( 'd', 'c', 'v', 'h', 'f', 'n', 't', 'o' ) ) ) {
 				$options[ $flag ] = true;
 			} elseif ( in_array( $flag, array( 's', 'i', 'p', 'm', 'r', 'w' ) ) ) {
 				if ( isset( $_SERVER['argv'][$i + 1] ) && ! preg_match( '/^-/', $_SERVER['argv'][$i + 1] ) ) {
@@ -398,12 +398,12 @@ if ( isset( $options['h'] ) || isset( $options['help'] ) ) {
 	$offline = ! $online ? "(we're offline)" : '';
 	$self = basename( $_SERVER['argv'][0] );
 	echo <<<USAGE
-Usage: $self [-l] [-f] [-r [number|searchterm]] [-m model] [-s [system_prompt|id]] [-i input_file_s] [-p picture_file] [-w port|--webui] [-t|--show-thinking] [conversation_input]
+Usage: $self [-c] [-f] [-r [number|searchterm]] [-m model] [-s [system_prompt|id]] [-i input_file_s] [-p picture_file] [-w port|--webui] [-t|--show-thinking] [conversation_input]
 
 Options:
-  -l                   Resume last conversation.
+  -c                   Continue (resume) last conversation.
   -r number|search     Resume a previous conversation and list 'number' conversations or search them.
-  -d                   Ignore the model's last answer. Useful when combining with -l to ask the question to another model.
+  -d                   Ignore the model's last answer. Useful when combining with -c to ask the question to another model.
   -v                   Be verbose.
   -f                   Allow file system writes for suggested file content by the AI.
   -m [model]           Use a specific model. Default: $model
@@ -425,10 +425,10 @@ Notes:
   - System prompts are managed via the web interface at --webui.
 
 Example usage:
-  $self -l
-    Resumes the last conversation.
+  $self -c
+    Continues (resumes) the last conversation.
 
-  $self -ld -m llama2
+  $self -cd -m llama2
     Reasks the previous question.
 
   $self -r 5
@@ -542,7 +542,7 @@ if ( $ansi || isset( $options['v'] ) ) {
 // Let SQLite auto-generate the conversation ID
 $conversation_id = null;
 
-if ( isset( $options['l'] ) ) {
+if ( isset( $options['c'] ) ) {
 	$lastConversations = $logStorage->findConversations( 1 );
 	$options['r'] = $lastConversations[0];
 }
@@ -593,8 +593,8 @@ if ( isset( $options['r'] ) ) {
 	}
 
 	$length = is_numeric( $options['r'] ) ? $options['r'] : 10;
-	if ( isset( $options['l'] ) ) {
-		echo 'Resuming the last conversation.', PHP_EOL;
+	if ( isset( $options['c'] ) ) {
+		echo 'Continuing the last conversation.', PHP_EOL;
 	} elseif ( $specific_conversation_id ) {
 			echo 'Resuming conversation ID: ', $specific_conversation_id, PHP_EOL;
 	} else {
@@ -614,7 +614,7 @@ if ( isset( $options['r'] ) ) {
 			}
 		}
 
-		if ( empty( $last_conversations ) && ! isset( $options['l'] ) ) {
+		if ( empty( $last_conversations ) && ! isset( $options['c'] ) ) {
 			echo 'Please choose one: ', PHP_EOL;
 		}
 
@@ -702,7 +702,7 @@ if ( isset( $options['r'] ) ) {
 				echo PHP_EOL;
 
 				$last_conversations[ $c ] = $conversation_key;
-				if ( isset( $options['l'] ) ) {
+				if ( isset( $options['c'] ) ) {
 					break;
 				}
 			}
@@ -713,7 +713,7 @@ if ( isset( $options['r'] ) ) {
 			}
 		}
 		echo PHP_EOL;
-		if ( isset( $options['l'] ) ) {
+		if ( isset( $options['c'] ) ) {
 			$sel = 1;
 			break;
 		}
@@ -927,9 +927,39 @@ $api_call_count = 0;
 $chunk_overflow = '';
 // The curl write function will be set after MessageStreamer is created
 
+// Set up signal handling for Ctrl-C to properly cancel multiline input
+$interrupted = false;
+if ( function_exists( 'pcntl_signal' ) && function_exists( 'pcntl_async_signals' ) ) {
+	pcntl_async_signals( true );
+	pcntl_signal(
+		SIGINT,
+		function ( $signo ) use ( &$interrupted, &$multiline ) {
+			global $ansi;
+			$interrupted = true;
+			if ( false !== $multiline ) {
+				if ( $ansi ) {
+					echo "\n\033[33mMultiline input cancelled.\033[m\n";
+				} else {
+					echo "\nMultiline input cancelled.\n";
+				}
+				$multiline = false;
+			}
+		}
+	);
+}
+
 // Start chatting.
 $multiline = false;
 while ( true ) {
+	if ( $interrupted ) {
+		$interrupted = false;
+		if ( false === $multiline ) {
+			echo PHP_EOL;
+			break;
+		}
+		continue;
+	}
+
 	if ( ! empty( $initial_input ) ) {
 		$input = $initial_input;
 		$initial_input = null;
@@ -937,14 +967,25 @@ while ( true ) {
 		break;
 	} else {
 		$input = readline( '> ' );
+		if ( false === $input ) {
+			if ( $interrupted ) {
+				$interrupted = false;
+				if ( false === $multiline ) {
+					echo PHP_EOL;
+					break;
+				}
+				continue;
+			}
+			break;
+		}
 	}
+
 	if ( false !== $multiline ) {
 		if ( '.' !== trim( $input ) ) {
 			$multiline .= $input . PHP_EOL;
 			continue;
 		} else {
 			$input = rtrim( $multiline ) . PHP_EOL;
-			// Finished with Multiline input.
 			$multiline = false;
 		}
 	}
@@ -1363,13 +1404,21 @@ while ( true ) {
 
 	if ( empty( $input ) || '.' === $input ) {
 		$multiline = '';
-		echo 'Starting multiline input. End with the last message as just a dot.', PHP_EOL;
+		if ( $ansi ) {
+			echo "\033[90mStarting multiline input. End with a line containing just a dot.\033[m", PHP_EOL;
+		} else {
+			echo 'Starting multiline input. End with a line containing just a dot.', PHP_EOL;
+		}
 		continue;
 	}
 
 	if ( ':' === substr( trim( $input ), -1 ) ) {
 		$multiline = $input . PHP_EOL;
-		echo 'Continuing multiline input. End with the last message as just a dot.', PHP_EOL;
+		if ( $ansi ) {
+			echo "\033[90mContinuing multiline input. End with a line containing just a dot.\033[m", PHP_EOL;
+		} else {
+			echo 'Continuing multiline input. End with a line containing just a dot.', PHP_EOL;
+		}
 		continue;
 	}
 

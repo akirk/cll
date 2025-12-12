@@ -1,0 +1,34 @@
+In tmux, you cannot directly split a view across two different windows because each window is an independent entity with its own set of panes. However, you can achieve a similar effect by:
+
+1. Splitting panes within the same window:  
+   You can split a single window into multiple panes (horizontally or vertically) and run different sessions or commands in each pane.
+
+   - Split vertically: `Ctrl+b %`
+   - Split horizontally: `Ctrl+b "`
+
+2. Using `tmux`'s "linked panes" or `tmux` panes that run the same process:  
+   This allows you to view the same content in multiple panes, but not two completely different windows.
+
+3. If you want to view contents of two windows side-by-side, you can combine the windows into panes within one window:
+
+   - For example, you can move the content/commands you want from one window into a pane in the other window.
+
+4. Using `tmux` `join-pane` or `break-pane` commands:
+
+   You can move a pane from one window to another window or vice versa:
+
+   - Move pane to another window:  
+     ```bash
+     tmux join-pane -s <source-pane> -t <target-window>
+     ```
+
+   This lets you gather panes from different windows into one window where you can split the view.
+
+---
+
+Summary
+
+- You cannot split a view directly between two separate windows, but you can split a single window into multiple panes.
+- If you want to see what’s in two different windows side by side, you can move panes between windows to have both inside one window.
+  
+If you want, I can help with exact tmux commands to move panes/windows around!

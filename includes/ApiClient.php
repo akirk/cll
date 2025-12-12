@@ -35,7 +35,6 @@ class ApiClient {
 		curl_setopt( $ch, CURLOPT_TIMEOUT, 2 );
 		$response = curl_exec( $ch );
 		$httpCode = curl_getinfo( $ch, CURLINFO_HTTP_CODE );
-		curl_close( $ch );
 
 		if ( $httpCode === 200 && $response ) {
 			$ollama_models = json_decode( $response, true );
@@ -271,7 +270,6 @@ class ApiClient {
 				)
 			);
 			$response = curl_exec( $ch );
-			curl_close( $ch );
 
 			$data = json_decode( $response, true );
 			if ( isset( $data['data'] ) ) {
@@ -315,11 +313,5 @@ class ApiClient {
 		}
 
 		return $counts;
-	}
-
-	public function __destruct() {
-		if ( $this->ch ) {
-			curl_close( $this->ch );
-		}
 	}
 }

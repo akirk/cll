@@ -7,6 +7,7 @@ class ExternalConversationImporter {
 	private $skipped = 0;
 	private $errors = 0;
 	private $defaultModel = null;
+	private $lastUsedModel = null;
 
 	public function __construct( $sqliteDbPath, $defaultModel = null ) {
 		if ( ! file_exists( $sqliteDbPath ) ) {
@@ -16,7 +17,7 @@ class ExternalConversationImporter {
 		$this->defaultModel = $defaultModel;
 	}
 
-	public function importFile( $jsonFilePath, $dryRun = false, $interactive = true ) {
+	public function importFile( $jsonFilePath, $dryRun = false, $interactive = true, $showSummary = true ) {
 		if ( ! file_exists( $jsonFilePath ) ) {
 			throw new Exception( "JSON file not found: {$jsonFilePath}" );
 		}
@@ -28,12 +29,52 @@ class ExternalConversationImporter {
 			throw new Exception( 'Invalid JSON: ' . json_last_error_msg() );
 		}
 
-		if ( ! isset( $data['chat_messages'] ) || ! is_array( $data['chat_messages'] ) ) {
-			throw new Exception( 'Invalid conversation export format: missing chat_messages' );
+		// Check if this is an array of conversations or a single conversation
+		if ( $this->isMultipleConversations( $data ) ) {
+			echo 'Found ' . count( $data ) . " conversations to import.\n\n";
+			foreach ( $data as $index => $conversation ) {
+				if ( ! isset( $conversation['chat_messages'] ) || ! is_array( $conversation['chat_messages'] ) ) {
+					$name = $conversation['name'] ?? "Conversation #" . ( $index + 1 );
+					echo "⚠️  Skipping {$name}: missing chat_messages\n";
+					++$this->skipped;
+					continue;
+				}
+				$this->importConversation( $conversation, $dryRun, $interactive );
+			}
+		} else {
+			if ( ! isset( $data['chat_messages'] ) || ! is_array( $data['chat_messages'] ) ) {
+				throw new Exception( 'Invalid conversation export format: missing chat_messages' );
+			}
+			$this->importConversation( $data, $dryRun, $interactive );
 		}
 
-		$this->importConversation( $data, $dryRun, $interactive );
-		$this->printSummary();
+		if ( $showSummary ) {
+			$this->printSummary();
+		}
+	}
+
+	private function isMultipleConversations( $data ) {
+		// Check if data is a sequential array (list) of conversations
+		if ( ! is_array( $data ) ) {
+			return false;
+		}
+
+		// If it has chat_messages at the top level, it's a single conversation
+		if ( isset( $data['chat_messages'] ) ) {
+			return false;
+		}
+
+		// Check if it's a sequential array (numeric keys starting from 0)
+		if ( array_keys( $data ) !== range( 0, count( $data ) - 1 ) ) {
+			return false;
+		}
+
+		// Check if at least the first item looks like a conversation
+		if ( ! empty( $data ) && is_array( $data[0] ) ) {
+			return isset( $data[0]['chat_messages'] ) || isset( $data[0]['name'] );
+		}
+
+		return false;
 	}
 
 	private function importConversation( $data, $dryRun = false, $interactive = true ) {
@@ -56,24 +97,24 @@ class ExternalConversationImporter {
 				return;
 			}
 
-			// Determine model from messages or use default
+			// Determine model: command-line > last used > auto-detect > claude-opus-4-5
 			$detectedModel = $this->detectModel( $messages );
-			$model = $this->defaultModel ? $this->defaultModel : $detectedModel;
+			$suggestedModel = $this->defaultModel ?? $this->lastUsedModel ?? $detectedModel ?? 'claude-opus-4-5';
 
 			// In interactive mode, ask user to confirm/change model
 			if ( $interactive && ! $dryRun && php_sapi_name() === 'cli' ) {
 				echo "\nConversation: {$name}\n";
 				echo 'Messages: ' . count( $messages ) . "\n";
-				echo "Detected model: {$detectedModel}\n";
-				if ( $this->defaultModel ) {
-					echo "Using specified model: {$model}\n";
+				if ( $detectedModel ) {
+					echo "Detected model: {$detectedModel}\n";
 				}
-				echo "Enter model name to use (or press Enter to use '{$model}'): ";
+				echo "Enter model name to use (or press Enter to use '{$suggestedModel}'): ";
 				$input = trim( fgets( STDIN ) );
-				if ( ! empty( $input ) ) {
-					$model = $input;
-				}
+				$model = ! empty( $input ) ? $input : $suggestedModel;
+				$this->lastUsedModel = $model;
 				echo "\n";
+			} else {
+				$model = $suggestedModel;
 			}
 
 			if ( $dryRun ) {
@@ -248,24 +289,10 @@ class ExternalConversationImporter {
 			}
 		}
 
-		// Check if this looks like a Claude conversation
-		// Claude conversations typically have assistant messages with markdown formatting
-		foreach ( $messages as $msg ) {
-			if ( ( $msg['sender'] ?? '' ) === 'assistant' ) {
-				$content = $this->extractContent( $msg );
-				// Claude responses often have markdown formatting like **bold**
-				if ( strpos( $content, '**' ) !== false ) {
-					return 'claude-3-5-sonnet-20241022';
-				}
-			}
-		}
-
-		// Default to a generic model name
-		return 'gpt-4';
+		return null;
 	}
 
 	private function normalizeModelName( $modelSlug ) {
-		// Map ChatGPT model slugs to standard names
 		$mapping = array(
 			'gpt-4o' => 'gpt-4o',
 			'gpt-4' => 'gpt-4',
@@ -284,7 +311,7 @@ class ExternalConversationImporter {
 		return $modelSlug;
 	}
 
-	private function printSummary() {
+	public function printSummary() {
 		echo "\n" . str_repeat( '=', 50 ) . "\n";
 		echo "Import Summary:\n";
 		echo "✅ Imported: {$this->imported}\n";
@@ -299,26 +326,54 @@ if ( php_sapi_name() === 'cli' ) {
 	$options = getopt( 'hdm:s:y', array( 'help', 'dry-run', 'model:', 'sqlite:', 'yes' ) );
 
 	if ( isset( $options['h'] ) || isset( $options['help'] ) || $argc < 2 ) {
-		echo "Usage: php import-chatgpt-json.php [options] <json_file>\n";
+		echo "Usage: php import-chatgpt-json.php [options] <json_file> [json_file2 ...]\n";
 		echo "\nImport conversation exports from ChatGPT, Claude, or other AI assistants.\n";
 		echo "\nOptions:\n";
 		echo "  -h, --help          Show this help message\n";
 		echo "  -d, --dry-run       Perform a dry run without importing\n";
-		echo "  -m, --model MODEL   Specify model to use (default: auto-detect)\n";
+		echo "  -m, --model MODEL   Specify model to use (default: auto-detect or claude-opus-4-5)\n";
 		echo "  -s, --sqlite FILE   SQLite database path (default: chats.sqlite)\n";
 		echo "  -y, --yes           Skip confirmation prompts (non-interactive)\n";
 		echo "\nArguments:\n";
-		echo "  json_file           Path to conversation JSON export file\n";
+		echo "  json_file           Path to conversation JSON export file(s)\n";
 		echo "\nExamples:\n";
 		echo "  php import-chatgpt-json.php conversation.json\n";
 		echo "  php import-chatgpt-json.php --dry-run ~/Downloads/chat-export.json\n";
 		echo "  php import-chatgpt-json.php -m claude-3-5-sonnet-20241022 conversation.json\n";
-		echo "  php import-chatgpt-json.php -y -s custom.sqlite conversation.json\n";
+		echo "  php import-chatgpt-json.php -y -s custom.sqlite *.json\n";
 		exit( 0 );
 	}
 
-	// Get the JSON file path (last argument)
-	$jsonFile = $argv[ count( $argv ) - 1 ];
+	// Extract JSON files from arguments (skip script name and options)
+	$jsonFiles = array();
+	$skipNext = false;
+	for ( $i = 1; $i < $argc; $i++ ) {
+		$arg = $argv[ $i ];
+		if ( $skipNext ) {
+			$skipNext = false;
+			continue;
+		}
+		// Skip option flags
+		if ( $arg === '-d' || $arg === '--dry-run' || $arg === '-h' || $arg === '--help' || $arg === '-y' || $arg === '--yes' ) {
+			continue;
+		}
+		// Skip option flags with values
+		if ( $arg === '-m' || $arg === '--model' || $arg === '-s' || $arg === '--sqlite' ) {
+			$skipNext = true;
+			continue;
+		}
+		// Skip combined option=value format
+		if ( preg_match( '/^-[ms]=/', $arg ) || preg_match( '/^--(model|sqlite)=/', $arg ) ) {
+			continue;
+		}
+		// This should be a JSON file
+		$jsonFiles[] = $arg;
+	}
+
+	if ( empty( $jsonFiles ) ) {
+		echo "Error: No JSON files specified.\n";
+		exit( 1 );
+	}
 
 	$sqliteDb = isset( $options['s'] ) ? $options['s'] : ( isset( $options['sqlite'] ) ? $options['sqlite'] : __DIR__ . '/chats.sqlite' );
 	$dryRun = isset( $options['d'] ) || isset( $options['dry-run'] );
@@ -327,7 +382,17 @@ if ( php_sapi_name() === 'cli' ) {
 
 	try {
 		$importer = new ExternalConversationImporter( $sqliteDb, $defaultModel );
-		$importer->importFile( $jsonFile, $dryRun, $interactive );
+		$multipleFiles = count( $jsonFiles ) > 1;
+		foreach ( $jsonFiles as $jsonFile ) {
+			if ( $multipleFiles ) {
+				echo "\n📁 Processing: {$jsonFile}\n";
+				echo str_repeat( '-', 50 ) . "\n";
+			}
+			$importer->importFile( $jsonFile, $dryRun, $interactive, ! $multipleFiles );
+		}
+		if ( $multipleFiles ) {
+			$importer->printSummary();
+		}
 	} catch ( Exception $e ) {
 		echo 'Error: ' . $e->getMessage() . "\n";
 		exit( 1 );

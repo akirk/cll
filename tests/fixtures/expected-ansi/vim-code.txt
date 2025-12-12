@@ -17,7 +17,7 @@ Here’s how you can do it step-by-step:
    Type:  
    ```vim
 [90m   :%s/<C-R>"//g
-[m```  
+[m   ```  
    
    Explanation:  
    - [34m:%s/[m — start a substitute command in the whole file ([34m%[m for all lines).  
@@ -28,7 +28,7 @@ Here’s how you can do it step-by-step:
    Modify the command to:  
    ```vim
 [90m   :%s/<C-R>"/REPLACETEXT/g
-[m```  
+[m   ```  
    Replace [34mREPLACETEXT[m with the new text you want.
 
 5. [1mPress Enter[m to execute.
@@ -41,7 +41,7 @@ Here’s how you can do it step-by-step:
 - Run command:  
   ```vim
 [90m	:%s/<C-R>"/bar/g
-[m```  
+[m  ```  
 - This replaces every occurrence of [34mfoo[m with [34mbar[m.
 
 ---

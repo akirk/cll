@@ -28,6 +28,7 @@ class MessageStreamer {
 		'code_block_start'      => false,
 		'code_block_indent'     => '',    // stores the indentation (leading whitespace) of the opening ```
 		'maybe_code_block_end'  => false,
+		'closing_fence_indent'  => '',    // stores the indentation detected for a potential closing fence
 		'math_buffer'           => '',
 		'math_type'             => false, // false, 'inline_paren', 'inline_dollar', 'display_bracket', 'display_dollar'
 		'math_start_pos'        => 0,
@@ -476,24 +477,38 @@ class MessageStreamer {
 			// Check for closing ``` while IN a code block - must come before the in_code_block handling
 			if ( $this->state['in_code_block'] && false !== $this->state['maybe_code_block_end'] && $i > 1 && substr( $message, $i - 2, 3 ) === '```' ) {
 				// Check if the indentation matches the opening fence
+				// Use closing_fence_indent if available (set when indentation was tracked across token boundaries)
 				$closing_indent = '';
-				$prev_newline_pos = strrpos( substr( $message, 0, $this->state['maybe_code_block_end'] ), PHP_EOL );
-				if ( $prev_newline_pos !== false ) {
-					$closing_indent = substr( $message, $prev_newline_pos + 1, $this->state['maybe_code_block_end'] - $prev_newline_pos - 1 );
+				if ( $this->state['closing_fence_indent'] !== '' ) {
+					$closing_indent = $this->state['closing_fence_indent'];
 				} else {
-					$closing_indent = substr( $message, 0, $this->state['maybe_code_block_end'] );
+					$prev_newline_pos = strrpos( substr( $message, 0, $this->state['maybe_code_block_end'] ), PHP_EOL );
+					if ( $prev_newline_pos !== false ) {
+						$closing_indent = substr( $message, $prev_newline_pos + 1, $this->state['maybe_code_block_end'] - $prev_newline_pos - 1 );
+					} else {
+						$closing_indent = substr( $message, 0, $this->state['maybe_code_block_end'] );
+					}
 				}
 				// Only close if indentation matches
 				if ( $closing_indent === $this->state['code_block_indent'] ) {
 					if ( $this->ansi ) {
 						yield "\033[m";
+						// In ANSI mode, the indentation was skipped - output it now
+						yield $closing_indent;
+					} elseif ( $this->state['closing_fence_indent'] !== '' ) {
+						// In non-ANSI mode, output the indentation (converted to tabs if even)
+						$indent = $this->state['closing_fence_indent'];
+						if ( strlen( $indent ) % 2 == 0 ) {
+							yield str_repeat( "\t", strlen( $indent ) / 2 );
+						} else {
+							yield $indent;
+						}
 					}
-					// Note: The indentation has already been output during the space-to-tab conversion
-					// (lines 554-565 for non-ANSI, skipped for ANSI). We only output the backticks.
 					yield substr( $message, $this->state['maybe_code_block_end'], 3 );
 					$this->state['in_code_block'] = false;
 					$this->state['maybe_code_block_end'] = false;
 					$this->state['code_block_indent'] = '';
+					$this->state['closing_fence_indent'] = '';
 					// $i is currently at the 3rd backtick (since we checked substr($message, $i-2, 3))
 					// After incrementing, $i will point to the character after the 3rd backtick
 					$i += 1;
@@ -583,6 +598,14 @@ class MessageStreamer {
 					$spaces_count = $this->state['maybe_space_to_tab'];
 					$this->state['maybe_space_to_tab'] = false;
 					if ( $spaces_count > 0 ) {
+						// Check if this is a backtick that might start a closing fence
+						if ( $message[ $i ] === '`' ) {
+							// Store the indent and mark potential fence start
+							$this->state['closing_fence_indent'] = str_repeat( ' ', $spaces_count );
+							$this->state['maybe_code_block_end'] = $i;
+							++$i;
+							continue;
+						}
 						if ( $spaces_count % 2 == 0 ) {
 							yield str_repeat( "\t", $spaces_count / 2 );
 						} else {
@@ -618,6 +641,16 @@ class MessageStreamer {
 				}
 				// Reset maybe_code_block_end if we see something other than a backtick
 				if ( false !== $this->state['maybe_code_block_end'] && $message[ $i ] !== '`' ) {
+					// Output the indentation that was skipped (if any)
+					if ( $this->state['closing_fence_indent'] !== '' ) {
+						$indent = $this->state['closing_fence_indent'];
+						if ( strlen( $indent ) % 2 == 0 ) {
+							yield str_repeat( "\t", strlen( $indent ) / 2 );
+						} else {
+							yield $indent;
+						}
+						$this->state['closing_fence_indent'] = '';
+					}
 					// Output the buffered backtick(s) and reset
 					for ( $j = $this->state['maybe_code_block_end']; $j < $i; $j++ ) {
 						yield $message[ $j ];
